@@ -7,13 +7,16 @@ RUN apt-get update && \
     # Intall packages by architecture
     if [ "$TARGETARCH" = "arm64" ]; then \
         GRUB_PKGS="grub-efi-arm64-bin"; \
+        printf "Building GRUB binaries for '%s'" "$TARGETARCH" >&2; \
     elif [ "$TARGETARCH" = "amd64" ]; then \
         GRUB_PKGS="grub-efi-amd64-bin"; \
+        printf "Building GRUB binaries for '%s'" "$TARGETARCH" >&2; \
     else \
         printf "Error: Unsupported build architecture" && \
         printf " '%s' for GRUB binaries.\n" "$TARGETARCH" >&2; \
         exit 1; \
     fi && \
+    DEBIAN_FRONTEND=noninteractive \
     apt-get install -y --no-install-recommends \
     bc binutils-gold bison ccache ecj fastjar flex \
     build-essential gcc g++ help2man texinfo \
