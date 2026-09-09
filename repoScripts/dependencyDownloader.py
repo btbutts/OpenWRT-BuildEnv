@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import io
 import sys
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import unquote
@@ -48,6 +49,8 @@ _REQUEST_HEADERS = {
     # would otherwise advertise gzip and decompress, making the header lie.
     "Accept-Encoding": "identity",
 }
+
+_MIB = 1024 * 1024
 
 
 def extract_filename(url: str) -> str:
@@ -125,6 +128,102 @@ def parse_content_length(headers) -> int | None:
     return length
 
 
+class ProgressMeter:
+    """Redraw a single stderr line with download / hash progress.
+
+    Uses carriage return (like wget/curl) so the meter occupies one
+    terminal row instead of scrolling. In streaming SHA-256 mode the
+    total chunk count is ceil(Content-Length / CHUNK_SIZE).
+    """
+
+    def __init__(
+        self,
+        total_bytes: int | None,
+        chunk_size: int,
+        show_chunks: bool,
+    ) -> None:
+        self.total_bytes = total_bytes
+        self.chunk_size = chunk_size
+        self.show_chunks = show_chunks
+        self.bytes_done = 0
+        self.chunks_done = 0
+        if total_bytes is None:
+            self.total_chunks: int | None = None
+        else:
+            self.total_chunks = (total_bytes + chunk_size - 1) // chunk_size
+        self._last_draw = 0.0
+        self._last_width = 0
+        self._drawn = False
+
+    def update(self, nbytes: int) -> None:
+        """Account for one received chunk and redraw at ~20 Hz."""
+        self.bytes_done += nbytes
+        self.chunks_done += 1
+        now = time.monotonic()
+        if now - self._last_draw < 0.05:
+            return
+        self._draw()
+        self._last_draw = now
+
+    def close(self) -> None:
+        """Force a final draw, then advance to the next line."""
+        self._draw()
+        if self._drawn:
+            sys.stderr.write("\n")
+            sys.stderr.flush()
+            self._drawn = False
+
+    def _render(self) -> str:
+        downloaded = self.bytes_done / _MIB
+        if self.total_bytes is not None:
+            total = self.total_bytes / _MIB
+            pct = (
+                100.0 * self.bytes_done / self.total_bytes
+                if self.total_bytes
+                else 100.0
+            )
+            byte_part = f"{downloaded:8.2f} / {total:8.2f} MiB ({pct:5.1f}%)"
+        else:
+            byte_part = f"{downloaded:8.2f} MiB"
+
+        if not self.show_chunks:
+            return f"Downloading: {byte_part}"
+
+        if self.total_chunks is not None:
+            width = max(len(str(self.total_chunks)), 1)
+            chunk_part = (
+                f"{self.chunks_done:{width}d} chunks hashed / "
+                f"{self.total_chunks} total chunks"
+            )
+        else:
+            chunk_part = f"{self.chunks_done} chunks hashed"
+        return f"Downloading: {byte_part} | {chunk_part}"
+
+    def _draw(self) -> None:
+        line = self._render()
+        pad = max(self._last_width - len(line), 0)
+        sys.stderr.write("\r" + line + (" " * pad))
+        sys.stderr.flush()
+        self._last_width = len(line)
+        self._drawn = True
+
+
+def consume_chunks(
+    response: requests.Response,
+    total_bytes: int | None,
+    show_chunks: bool,
+    on_chunk,
+) -> None:
+    """Feed each response body chunk to *on_chunk* while updating progress."""
+    meter = ProgressMeter(total_bytes, CHUNK_SIZE, show_chunks)
+    try:
+        for chunk in iter_chunks(response):
+            on_chunk(chunk)
+            meter.update(len(chunk))
+    finally:
+        meter.close()
+
+
 def new_session() -> requests.Session:
     """Create a preconfigured session for dependency downloads."""
     session = requests.Session()
@@ -146,13 +245,16 @@ def iter_chunks(response: requests.Response, chunk_size: int = CHUNK_SIZE):
             yield chunk
 
 
-def write_chunks(response: requests.Response, dest: Path) -> None:
+def write_chunks(
+    response: requests.Response,
+    dest: Path,
+    total_bytes: int | None = None,
+) -> None:
     """Stream *response* to *dest* via a sibling .part file, then replace."""
     part_path = dest.with_name(dest.name + ".part")
     try:
         with part_path.open("wb") as handle:
-            for chunk in iter_chunks(response):
-                handle.write(chunk)
+            consume_chunks(response, total_bytes, False, handle.write)
         part_path.replace(dest)
     except Exception:
         if part_path.exists():
@@ -162,7 +264,7 @@ def write_chunks(response: requests.Response, dest: Path) -> None:
 
 def write_buffer(buffer: io.BytesIO, dest: Path) -> None:
     """
-    Write buffer contents to output dir via 
+    Write buffer contents to output dir via
     a sibling .part file, then replace.
     """
     part_path = dest.with_name(dest.name + ".part")
@@ -177,11 +279,24 @@ def write_buffer(buffer: io.BytesIO, dest: Path) -> None:
         raise
 
 
-def stream_hash(response: requests.Response) -> str:
+def read_into_buffer(
+    response: requests.Response,
+    total_bytes: int | None = None,
+) -> io.BytesIO:
+    """Download a response body into an in-memory buffer with progress."""
+    buffer = io.BytesIO()
+    consume_chunks(response, total_bytes, False, buffer.write)
+    buffer.seek(0)
+    return buffer
+
+
+def stream_hash(
+    response: requests.Response,
+    total_bytes: int | None = None,
+) -> str:
     """Return the SHA-256 hash of a streamed response body."""
     digest = hashlib.sha256()
-    for chunk in iter_chunks(response):
-        digest.update(chunk)
+    consume_chunks(response, total_bytes, True, digest.update)
     return digest.hexdigest()
 
 
@@ -266,7 +381,7 @@ def download(url: str, dest: Path) -> str:
                         f"Transfer mode    : in-memory "
                         f"(<= {format_bytes(MEMORY_LIMIT_BYTES)})"
                     )
-                    buffer = io.BytesIO(response.content)
+                    buffer = read_into_buffer(response, remote_size)
                 else:
                     log("Transfer mode    : streaming (chunked SHA-256)")
                     buffer = None
@@ -276,14 +391,14 @@ def download(url: str, dest: Path) -> str:
                         write_buffer(buffer, dest)
                         buffer.close()
                     else:
-                        write_chunks(response, dest)
+                        write_chunks(response, dest, remote_size)
                     return "created"
 
                 # Local copy exists: compare SHA-256 before writing.
                 if buffer is not None:
                     remote_hash = sha256_buffer(buffer)
                 else:
-                    remote_hash = stream_hash(response)
+                    remote_hash = stream_hash(response, remote_size)
 
                 assert local_hash_future is not None
                 local_hash = local_hash_future.result()
@@ -304,7 +419,8 @@ def download(url: str, dest: Path) -> str:
             # consumed for hashing, so fetch again and write directly.
             log("SHA-256 mismatch : re-downloading to overwrite local copy")
             with get_response(session, url) as response:
-                write_chunks(response, dest)
+                remote_size = parse_content_length(response.headers)
+                write_chunks(response, dest, remote_size)
             return "updated"
     finally:
         if executor is not None:
