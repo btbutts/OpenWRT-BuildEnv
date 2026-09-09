@@ -129,12 +129,14 @@ def parse_content_length(headers) -> int | None:
 
 
 class ProgressMeter:
-    """Redraw a single stderr line with download / hash progress.
+    """Redraw a two-line stderr block with download / hash progress.
 
-    Uses carriage return (like wget/curl) so the meter occupies one
-    terminal row instead of scrolling. In streaming SHA-256 mode the
-    total chunk count is ceil(Content-Length / CHUNK_SIZE).
+    Uses ANSI cursor-up so the meter occupies a fixed terminal block
+    instead of scrolling (wget/curl style). In streaming SHA-256 mode
+    the total chunk count is ceil(Content-Length / CHUNK_SIZE).
     """
+
+    _LABEL = "Downloading:  "  # 14 chars; chunk line is indented to match
 
     def __init__(
         self,
@@ -152,7 +154,7 @@ class ProgressMeter:
         else:
             self.total_chunks = (total_bytes + chunk_size - 1) // chunk_size
         self._last_draw = 0.0
-        self._last_width = 0
+        self._nlines = 0
         self._drawn = False
 
     def update(self, nbytes: int) -> None:
@@ -166,15 +168,12 @@ class ProgressMeter:
         self._last_draw = now
 
     def close(self) -> None:
-        """Force a final draw, then advance to the next line."""
+        """Force a final draw, leaving the cursor on the line below the meter."""
         self._draw()
-        if self._drawn:
-            sys.stderr.write("\n")
-            sys.stderr.flush()
-            self._drawn = False
 
-    def _render(self) -> str:
+    def _render_lines(self) -> list[str]:
         downloaded = self.bytes_done / _MIB
+        indent = " " * len(self._LABEL)
         if self.total_bytes is not None:
             total = self.total_bytes / _MIB
             pct = (
@@ -182,29 +181,32 @@ class ProgressMeter:
                 if self.total_bytes
                 else 100.0
             )
-            byte_part = f"{downloaded:8.2f} / {total:8.2f} MiB ({pct:5.1f}%)"
+            lines = [
+                f"{self._LABEL}{downloaded:7.2f}  /  {total:7.2f} MiB ({pct:.1f}%)"
+            ]
         else:
-            byte_part = f"{downloaded:8.2f} MiB"
+            lines = [f"{self._LABEL}{downloaded:7.2f} MiB"]
 
         if not self.show_chunks:
-            return f"Downloading: {byte_part}"
+            return lines
 
         if self.total_chunks is not None:
-            width = max(len(str(self.total_chunks)), 1)
-            chunk_part = (
-                f"{self.chunks_done:{width}d} chunks hashed / "
-                f"{self.total_chunks} total chunks"
+            lines.append(
+                f"{indent}{self.chunks_done:7d}  /  {self.total_chunks:7d} "
+                "total chunks hashed"
             )
         else:
-            chunk_part = f"{self.chunks_done} chunks hashed"
-        return f"Downloading: {byte_part} | {chunk_part}"
+            lines.append(f"{indent}{self.chunks_done:7d} chunks hashed")
+        return lines
 
     def _draw(self) -> None:
-        line = self._render()
-        pad = max(self._last_width - len(line), 0)
-        sys.stderr.write("\r" + line + (" " * pad))
+        lines = self._render_lines()
+        if self._drawn and self._nlines:
+            sys.stderr.write(f"\033[{self._nlines}A")
+        for line in lines:
+            sys.stderr.write("\r\033[2K" + line + "\n")
         sys.stderr.flush()
-        self._last_width = len(line)
+        self._nlines = len(lines)
         self._drawn = True
 
 
