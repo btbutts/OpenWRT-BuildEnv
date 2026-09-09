@@ -1,0 +1,53 @@
+name: Download OpenWRT Builder Dependencies
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+  push:
+    branches: ["master"]
+
+jobs:
+  sync-subnets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    # Prevents concurrent push/cron runs from conflicting on git operations
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.4.0
+        with:
+          python-version: '>=3.14'
+
+      - name: Install Python deps
+        run: pip install requests
+
+      - name: Fetch Clang + LLVM Install Script
+        run: |
+          python3 repoScripts/dependencyDownloader.py "https://apt.llvm.org/llvm.sh" ../resources/
+
+      - name: Fetch OpenWRT Image Builder Archive
+        run: |
+          python3 repoScripts/dependencyDownloader.py \
+          "https://downloads.openwrt.org/snapshots/targets/x86/64/openwrt-imagebuilder-x86-64.Linux-x86_64.tar.zst" \
+          ../resources/
+
+      - name: Commit and push if changed
+        run: |
+          if git status --porcelain | grep -q 'resources/'; then
+            git config --local user.name "github-actions[bot]"
+            git config --local user.email "github-actions[bot]@users.noreply.github.com"
+            git add "resources/*"
+            git commit -m "chore: sync dependencies [skip ci]"
+            git push
+          else
+            echo "Working tree clean. No commit required."
+          fi
