@@ -136,7 +136,7 @@ class ProgressMeter:
     the total chunk count is ceil(Content-Length / CHUNK_SIZE).
     """
 
-    _LABEL = "Downloading:  "  # 14 chars; chunk line is indented to match
+    _LABEL = "Downloading        :"  # 19 chars; chunk line is indented to match
 
     def __init__(
         self,
@@ -356,7 +356,7 @@ def download(url: str, dest: Path) -> str:
     Returns one of: 'created', 'updated', 'unchanged'.
     """
     local_exists = dest.is_file()
-    log(f"Local file exists : {local_exists}")
+    log(f"Local file exists  : {local_exists}")
 
     executor: ThreadPoolExecutor | None = None
     local_hash_future: Future[str] | None = None
@@ -369,23 +369,23 @@ def download(url: str, dest: Path) -> str:
             with get_response(session, url) as response:
                 remote_size = parse_content_length(response.headers)
                 if remote_size is None:
-                    log("Remote size      : unknown (no Content-Length); streaming")
+                    log("Remote size        : unknown (no Content-Length); streaming")
                     use_memory = False
                 else:
                     log(
-                        f"Remote size      : {format_bytes(remote_size)} "
+                        f"Remote size        : {format_bytes(remote_size)} "
                         f"({remote_size} bytes)"
                     )
                     use_memory = remote_size <= MEMORY_LIMIT_BYTES
 
                 if use_memory:
                     log(
-                        f"Transfer mode    : in-memory "
+                        f"Transfer mode      : in-memory "
                         f"(<= {format_bytes(MEMORY_LIMIT_BYTES)})"
                     )
                     buffer = read_into_buffer(response, remote_size)
                 else:
-                    log("Transfer mode    : streaming (chunked SHA-256)")
+                    log("Transfer mode      : streaming (chunked SHA-256)")
                     buffer = None
 
                 if not local_exists:
@@ -404,8 +404,8 @@ def download(url: str, dest: Path) -> str:
 
                 assert local_hash_future is not None
                 local_hash = local_hash_future.result()
-                log(f"Remote SHA-256   : {remote_hash}")
-                log(f"Local  SHA-256   : {local_hash}")
+                log(f"Remote SHA-256     : {remote_hash}")
+                log(f"Local  SHA-256     : {local_hash}")
 
                 if remote_hash == local_hash:
                     if buffer is not None:
@@ -419,7 +419,7 @@ def download(url: str, dest: Path) -> str:
 
             # Streaming path, hashes differed: the first response body was
             # consumed for hashing, so fetch again and write directly.
-            log("SHA-256 mismatch : re-downloading to overwrite local copy")
+            log("SHA-256 mismatch   : re-downloading to overwrite local copy")
             with get_response(session, url) as response:
                 remote_size = parse_content_length(response.headers)
                 write_chunks(response, dest, remote_size)
@@ -442,11 +442,11 @@ def main(argv: list[str] | None = None) -> int:
     output_dir = resolve_output_dir(args.output_dir)
     dest = output_dir / filename
 
-    log(f"Script directory : {SCRIPT_DIR}")
-    log(f"Output directory : {output_dir}")
-    log(f"URL              : {args.url}")
-    log(f"Filename         : {filename}")
-    log(f"Destination      : {dest}")
+    log(f"Script directory   : {SCRIPT_DIR}")
+    log(f"Output directory   : {output_dir}")
+    log(f"URL                : {args.url}")
+    log(f"Filename           : {filename}")
+    log(f"Destination        : {dest}")
 
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -476,11 +476,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if result == "created":
-        log(f"Wrote new file   : {dest}")
+        log(f"Wrote new file     : {dest}")
     elif result == "updated":
-        log(f"Overwrote file   : {dest}\n(SHA-256 differed)")
+        log(f"Overwrote file     : {dest}\n(SHA-256 differed)")
     else:
-        log(f"Left file intact : {dest}\n(SHA-256 matched; download discarded)")
+        log(f"Left file intact   : {dest}\n(SHA-256 matched; download discarded)")
     return 0
 
 
