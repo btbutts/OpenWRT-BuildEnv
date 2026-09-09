@@ -11,6 +11,7 @@ Both the URL and the output directory are required. The stored filename is
 taken from the URL (right-to-left until '/', '=', or an invalid filename
 character). An existing file is overwritten only when its SHA-256 differs
 from the freshly downloaded copy.
+
 """
 
 from __future__ import annotations
@@ -21,9 +22,9 @@ import io
 import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from urllib.error import HTTPError, URLError
 from urllib.parse import unquote
-from urllib.request import Request, urlopen
+
+import requests
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -36,9 +37,17 @@ HTTP_TIMEOUT_SECONDS = 120
 _INVALID_FILENAME_CHARS = set('<>:"/\\|?*=' + "".join(chr(i) for i in range(32)))
 
 _USER_AGENT = (
-    "OpenWRT-BuildEnv-dependencyDownloader/1.0 "
-    "(+https://github.com/btbutts/OpenWRT-BuildEnv)"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/152.0.4196.66 Safari/537.36 Edg/152.0.4196.66"
 )
+
+_REQUEST_HEADERS = {
+    "User-Agent": _USER_AGENT,
+    # Identity so Content-Length matches the bytes we hash/write. requests
+    # would otherwise advertise gzip and decompress, making the header lie.
+    "Accept-Encoding": "identity",
+}
 
 
 def extract_filename(url: str) -> str:
@@ -68,6 +77,7 @@ def resolve_output_dir(output_arg: str) -> Path:
 
 
 def format_bytes(num_bytes: int) -> str:
+    """Return *num_bytes* as a human-readable size string."""
     if num_bytes < 1024:
         return f"{num_bytes} B"
     for unit, size in (("GiB", 1024**3), ("MiB", 1024**2), ("KiB", 1024)):
@@ -77,6 +87,7 @@ def format_bytes(num_bytes: int) -> str:
 
 
 def sha256_file(path: Path) -> str:
+    """Return the SHA-256 hex digest for a file at *path*."""
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         while True:
@@ -88,6 +99,7 @@ def sha256_file(path: Path) -> str:
 
 
 def sha256_buffer(buffer: io.BytesIO) -> str:
+    """Return the SHA-256 hex digest for the current contents of *buffer*."""
     digest = hashlib.sha256()
     buffer.seek(0)
     while True:
@@ -100,6 +112,7 @@ def sha256_buffer(buffer: io.BytesIO) -> str:
 
 
 def parse_content_length(headers) -> int | None:
+    """Return the parsed Content-Length value, or None if unavailable."""
     raw = headers.get("Content-Length")
     if raw is None or raw == "":
         return None
@@ -112,26 +125,28 @@ def parse_content_length(headers) -> int | None:
     return length
 
 
-def build_request(url: str) -> Request:
-    return Request(
-        url,
-        headers={
-            "User-Agent": _USER_AGENT,
-            "Accept-Encoding": "identity",
-        },
-        method="GET",
-    )
+def new_session() -> requests.Session:
+    """Create a preconfigured session for dependency downloads."""
+    session = requests.Session()
+    session.headers.update(_REQUEST_HEADERS)
+    return session
 
 
-def iter_chunks(response, chunk_size: int = CHUNK_SIZE):
-    while True:
-        chunk = response.read(chunk_size)
-        if not chunk:
-            break
-        yield chunk
+def get_response(session: requests.Session, url: str) -> requests.Response:
+    """Fetch a URL as a streamed response and fail fast on HTTP errors."""
+    response = session.get(url, stream=True, timeout=HTTP_TIMEOUT_SECONDS)
+    response.raise_for_status()
+    return response
 
 
-def write_chunks(response, dest: Path) -> None:
+def iter_chunks(response: requests.Response, chunk_size: int = CHUNK_SIZE):
+    """Yield non-empty content chunks from a streamed HTTP response."""
+    for chunk in response.iter_content(chunk_size=chunk_size):
+        if chunk:  # drop keep-alive padding
+            yield chunk
+
+
+def write_chunks(response: requests.Response, dest: Path) -> None:
     """Stream *response* to *dest* via a sibling .part file, then replace."""
     part_path = dest.with_name(dest.name + ".part")
     try:
@@ -146,6 +161,10 @@ def write_chunks(response, dest: Path) -> None:
 
 
 def write_buffer(buffer: io.BytesIO, dest: Path) -> None:
+    """
+    Write buffer contents to output dir via 
+    a sibling .part file, then replace.
+    """
     part_path = dest.with_name(dest.name + ".part")
     try:
         buffer.seek(0)
@@ -158,7 +177,8 @@ def write_buffer(buffer: io.BytesIO, dest: Path) -> None:
         raise
 
 
-def stream_hash(response) -> str:
+def stream_hash(response: requests.Response) -> str:
+    """Return the SHA-256 hash of a streamed response body."""
     digest = hashlib.sha256()
     for chunk in iter_chunks(response):
         digest.update(chunk)
@@ -166,14 +186,16 @@ def stream_hash(response) -> str:
 
 
 def log(message: str) -> None:
+    """Print a message to stdout."""
     print(message, flush=True)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for the dependency downloader."""
     parser = argparse.ArgumentParser(
         description=(
-            "Download a URL into an output directory resolved relative to "
-            "this script's parent directory. Overwrites only when SHA-256 differs."
+            "Download a URL into an output directory resolved relative to this "
+            "script's parent directory. Overwrites only when sha256sum differs."
         )
     )
     parser.add_argument(
@@ -226,70 +248,71 @@ def download(url: str, dest: Path) -> str:
         local_hash_future = executor.submit(sha256_file, dest)
 
     try:
-        request = build_request(url)
-        with urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
-            remote_size = parse_content_length(response.headers)
-            if remote_size is None:
-                log("Remote size      : unknown (no Content-Length); streaming")
-                use_memory = False
-            else:
-                log(
-                    f"Remote size      : {format_bytes(remote_size)} "
-                    f"({remote_size} bytes)"
-                )
-                use_memory = remote_size <= MEMORY_LIMIT_BYTES
+        with new_session() as session:
+            with get_response(session, url) as response:
+                remote_size = parse_content_length(response.headers)
+                if remote_size is None:
+                    log("Remote size      : unknown (no Content-Length); streaming")
+                    use_memory = False
+                else:
+                    log(
+                        f"Remote size      : {format_bytes(remote_size)} "
+                        f"({remote_size} bytes)"
+                    )
+                    use_memory = remote_size <= MEMORY_LIMIT_BYTES
 
-            if use_memory:
-                log(
-                    f"Transfer mode    : in-memory "
-                    f"(<= {format_bytes(MEMORY_LIMIT_BYTES)})"
-                )
-                buffer = io.BytesIO(response.read())
-            else:
-                log("Transfer mode    : streaming (chunked SHA-256)")
-                buffer = None
+                if use_memory:
+                    log(
+                        f"Transfer mode    : in-memory "
+                        f"(<= {format_bytes(MEMORY_LIMIT_BYTES)})"
+                    )
+                    buffer = io.BytesIO(response.content)
+                else:
+                    log("Transfer mode    : streaming (chunked SHA-256)")
+                    buffer = None
 
-            if not local_exists:
+                if not local_exists:
+                    if buffer is not None:
+                        write_buffer(buffer, dest)
+                        buffer.close()
+                    else:
+                        write_chunks(response, dest)
+                    return "created"
+
+                # Local copy exists: compare SHA-256 before writing.
+                if buffer is not None:
+                    remote_hash = sha256_buffer(buffer)
+                else:
+                    remote_hash = stream_hash(response)
+
+                assert local_hash_future is not None
+                local_hash = local_hash_future.result()
+                log(f"Remote SHA-256   : {remote_hash}")
+                log(f"Local  SHA-256   : {local_hash}")
+
+                if remote_hash == local_hash:
+                    if buffer is not None:
+                        buffer.close()
+                    return "unchanged"
+
                 if buffer is not None:
                     write_buffer(buffer, dest)
                     buffer.close()
-                else:
-                    write_chunks(response, dest)
-                return "created"
+                    return "updated"
 
-            # Local copy exists: compare SHA-256 before writing.
-            if buffer is not None:
-                remote_hash = sha256_buffer(buffer)
-            else:
-                remote_hash = stream_hash(response)
-
-            assert local_hash_future is not None
-            local_hash = local_hash_future.result()
-            log(f"Remote SHA-256   : {remote_hash}")
-            log(f"Local  SHA-256   : {local_hash}")
-
-            if remote_hash == local_hash:
-                if buffer is not None:
-                    buffer.close()
-                return "unchanged"
-
-            if buffer is not None:
-                write_buffer(buffer, dest)
-                buffer.close()
-                return "updated"
-
-        # Streaming path, hashes differed: the first response body was
-        # consumed for hashing, so fetch again and write directly.
-        log("SHA-256 mismatch : re-downloading to overwrite local copy")
-        with urlopen(build_request(url), timeout=HTTP_TIMEOUT_SECONDS) as response:
-            write_chunks(response, dest)
-        return "updated"
+            # Streaming path, hashes differed: the first response body was
+            # consumed for hashing, so fetch again and write directly.
+            log("SHA-256 mismatch : re-downloading to overwrite local copy")
+            with get_response(session, url) as response:
+                write_chunks(response, dest)
+            return "updated"
     finally:
         if executor is not None:
             executor.shutdown(wait=False)
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the dependency downloader CLI."""
     args = parse_args(argv)
 
     try:
@@ -322,11 +345,13 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         result = download(args.url, dest)
-    except HTTPError as exc:
-        print(f"error: HTTP {exc.code} for {args.url}: {exc.reason}", file=sys.stderr)
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else "?"
+        reason = exc.response.reason if exc.response is not None else exc
+        print(f"error: HTTP {status} for {args.url}: {reason}", file=sys.stderr)
         return 1
-    except URLError as exc:
-        print(f"error: failed to fetch {args.url}: {exc.reason}", file=sys.stderr)
+    except requests.RequestException as exc:
+        print(f"error: failed to fetch {args.url}: {exc}", file=sys.stderr)
         return 1
     except OSError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -335,9 +360,9 @@ def main(argv: list[str] | None = None) -> int:
     if result == "created":
         log(f"Wrote new file   : {dest}")
     elif result == "updated":
-        log(f"Overwrote file   : {dest} (SHA-256 differed)")
+        log(f"Overwrote file   : {dest}\n(SHA-256 differed)")
     else:
-        log(f"Left file intact : {dest} (SHA-256 matched; download discarded)")
+        log(f"Left file intact : {dest}\n(SHA-256 matched; download discarded)")
     return 0
 
 

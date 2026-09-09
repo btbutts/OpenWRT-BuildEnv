@@ -1,0 +1,19 @@
+services:
+  openwrt_build_environment:
+    networks:
+      openwrt_container_net:
+        ipv4_address: ${CONTAINER_IP}
+
+networks:
+  openwrt_container_net:
+    name: openwrt_container_net
+    driver: macvlan
+    driver_opts:
+      parent: ${HOST_INTERFACE}         # Define host network interface we bind to
+    ipam:
+      config:
+        - subnet: ${LAN_SUBNET}         # Your local subnet
+          gateway: ${LAN_GATEWAY}       # Your LAN router IP
+          ip_range: ${MACVLAN_IP_RANGE} # Reserved IP Range
+          aux_addresses:                # Restrict IPs from 'ip_range'
+            reserved_ip_1: ${EXCLUDED_IP_1}

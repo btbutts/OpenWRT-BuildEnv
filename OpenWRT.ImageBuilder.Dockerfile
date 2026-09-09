@@ -29,17 +29,33 @@ RUN apt-get update && \
     git iputils-ping traceroute mtr rclone zstd \
     u-boot-tools gzip xsltproc xxd make libc6-dev \
     gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-    g++-aarch64-linux-gnu device-tree-compiler \
+    g++-aarch64-linux-gnu device-tree-compiler htop \
     openssh-server sudo zsh lsb-release gnupg pbzip2 \
+    ${GRUB_PKGS} \
     && apt-get clean && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/run/sshd
 
-# Download, execute, and clean up the LLVM installation script automatically
-RUN wget https://apt.llvm.org/llvm.sh \
-    && chmod +x llvm.sh \
-    && ./llvm.sh 21 all \
-    && rm llvm.sh \
+# Copy local LLVM installation script, execute, and clean up
+COPY resources/llvm.sh /tmp/llvm.sh
+RUN chmod +x /tmp/llvm.sh \
+    && /tmp/llvm.sh 21 all \
+    && rm -f /tmp/llvm.sh \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Programmatically Standardize System-Wide PATH
+RUN FULL_PATH=$(printf '%s' "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$(getconf PATH)" | \
+        awk -v RS=: -v ORS=: '!a[$0]++ {if (length($0)) print $0}' | sed 's/:$//') && \
+    echo "PATH=\"${FULL_PATH}\"" > /etc/environment && \
+    sed -i "s|^ENV_PATH.*|ENV_PATH    PATH=${FULL_PATH}|g" /etc/login.defs && \
+    sed -i "s|^ENV_SUPATH.*|ENV_SUPATH  PATH=${FULL_PATH}|g" /etc/login.defs && \
+    mkdir -p /etc/zsh && \
+    echo "export PATH=\"${FULL_PATH}\"" >> /etc/profile && \
+    echo "export PATH=\"${FULL_PATH}\"" >> /etc/zsh/zshenv
+
+# Configure Zsh
+RUN touch /etc/skel/.zshrc /etc/skel/.zshenv /etc/skel/.zprofile && \
+    echo 'autoload -Uz compinit && compinit -C' >> /etc/skel/.zshrc && \
+    echo 'setopt autocd autopushd pushdignoredups' >> /etc/skel/.zshrc
 
 # Add global 'lsnum' shell function for both Bash and Zsh users
 RUN printf '\nlsnum() {\n    local parse_perms='\''{k=0;for(i=0;i<=8;i++)k+=((substr($1,i+2,1)~/[rwx]/)*2^(8-i));if(k)printf("%%0o ",k);print}'\''\n    ls -alh "${@:-.}" | awk "$parse_perms"\n}\n' >> /etc/bash.bashrc \
@@ -71,4 +87,3 @@ COPY --chown=builder:builder entrypoint.sh /builder/entrypoint.sh
 RUN chmod +x /builder/entrypoint.sh
 ENTRYPOINT ["/builder/entrypoint.sh"]
 CMD ["bash"]
-

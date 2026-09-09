@@ -1,0 +1,7 @@
+include:
+  - path: compose.${HOST_OS:-linux}.yml
+    #env_file:
+    #  - OpenWRT.Config.env
+  - path: OpenWRT.ImageBuilder.Compose.yml
+    #env_file:
+    #  - OpenWRT.Config.env

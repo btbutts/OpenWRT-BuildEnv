@@ -1,0 +1,18 @@
+services:
+  openwrt_build_environment:
+    networks:
+      openwrt_container_net:
+        ipv4_address: ${CONTAINER_IP}
+
+networks:
+  openwrt_container_net:
+    name: openwrt_container_net
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: ${BRIDGE_SUBNET}    # Defines the subnet for the bridge
+          gateway: ${BRIDGE_GATEWAY}     # Defines the gateway IP for the host
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"         # Allows container-to-container talk
+      com.docker.network.bridge.enable_ip_masquerade: "true" # Forces/ensures outbound masquerading

@@ -1,0 +1,48 @@
+##Begin Container Config##
+services:
+  openwrt_build_environment:
+    container_name: openwrt_build_environment
+    image: ghcr.io/btbutts/openwrt-buildenv:latest
+    build:
+      context: .
+      dockerfile: OpenWRT.ImageBuilder.Dockerfile
+    deploy:
+      resources:
+        limits:
+          cpus: '6.0'      # Maximum allocation equivalent to 6 whole CPU cores
+          memory: 12G       # Optional: Hard limit for RAM
+    
+    # Override target platform for the container
+    platform: ${TARGET_PLATFORM:-} # Defaults to auto-select
+
+    ports:
+      - "22222:22"
+
+    # Direct shared workspace folder mapping
+    volumes:
+      - ./buildEnvShare:/builder/workspace:rw
+
+    # 🚀 ENABLING DOCKER COMPOSE WATCH HERE
+    develop:
+      watch:
+        # Sync workspace files automatically
+        - action: sync
+          path: ./buildEnvShare
+          target: /builder/workspace
+          initial_sync: true
+          ignore: []
+
+        # Auto-trigger rebuilds after dockerfile edits
+        - action: rebuild
+          path: ./OpenWRT.ImageBuilder.Dockerfile
+          
+
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    tty: true
+    stdin_open: true
+
+    networks:
+      - openwrt_container_net
