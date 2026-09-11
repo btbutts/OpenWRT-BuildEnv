@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
 
+# Run the OpenWRT Image Builder extraction step before launching services
+echo "Running pre-startup tasks..."
+/builder/extractImageBuilder.sh
+
 # Ensure runtime privilege separation directory
 # exists with correct permissions
 sudo mkdir -p /run/sshd

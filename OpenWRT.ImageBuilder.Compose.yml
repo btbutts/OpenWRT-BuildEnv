@@ -2,7 +2,9 @@
 services:
   openwrt_build_environment:
     container_name: openwrt_build_environment
+    hostname: OpenWRT-Builder
     image: ghcr.io/btbutts/openwrt-buildenv:latest
+    pull_policy: always
     build:
       context: .
       dockerfile: OpenWRT.ImageBuilder.Dockerfile
@@ -21,8 +23,10 @@ services:
     # Direct shared workspace folder mapping
     volumes:
       - ./buildEnvShare:/builder/workspace:rw
+      - ./OpenWRTimagesOut:/builder/OpenWRT-ImageBuilder/bin/targets:rw
+      - OpenWRTbuildVolume:/builder/OpenWRT-ImageBuilder:rw
 
-    # 🚀 ENABLING DOCKER COMPOSE WATCH HERE
+    # Enable Docker Compose Watch
     develop:
       watch:
         # Sync workspace files automatically
@@ -46,3 +50,6 @@ services:
 
     networks:
       - openwrt_container_net
+
+volumes:
+  OpenWRTbuildVolume:

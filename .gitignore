@@ -1,2 +1,6 @@
 buildEnvShare/
 .DS_Store
+.OpenWRT.Builder.venv
+buildArchive/
+OpenWRTImageBuilder/
+OpenWRTImagesOut/

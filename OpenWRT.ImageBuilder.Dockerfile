@@ -3,13 +3,19 @@ FROM debian:trixie-slim
 ARG TARGETARCH
 
 # Install build environment dependencies
-RUN apt-get update && \
-    # Intall packages by architecture
+RUN sed -i '/^Components:/ s/$/ non-free/' \
+    /etc/apt/sources.list.d/debian.sources && \
+    sed -i 's|path-exclude /usr/share/man/\*|path-include /usr/share/man/\*|g' \
+    /etc/dpkg/dpkg.cfg.d/docker && \
+    apt-get update && DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y man-db manpages manpages-posix \
+    manpages-posix-dev less && \
+    # Install packages by architecture
     if [ "$TARGETARCH" = "arm64" ]; then \
         GRUB_PKGS="grub-efi-arm64-bin"; \
         printf "Building GRUB binaries for '%s'" "$TARGETARCH" >&2; \
     elif [ "$TARGETARCH" = "amd64" ]; then \
-        GRUB_PKGS="grub-efi-amd64-bin"; \
+        GRUB_PKGS="grub-efi-amd64-bin grub-pc-bin"; \
         printf "Building GRUB binaries for '%s'" "$TARGETARCH" >&2; \
     else \
         printf "Error: Unsupported build architecture" && \
@@ -19,7 +25,7 @@ RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive \
     apt-get install -y --no-install-recommends \
     bc binutils-gold bison ccache ecj fastjar flex \
-    build-essential gcc g++ help2man texinfo \
+    build-essential gcc g++ help2man texinfo vim nano \
     libbsd-dev libelf-dev libncurses-dev zlib1g-dev \
     liblzma-dev mtd-utils meson mold ninja-build \
     pigz pkg-config python3-dev subversion swig \
@@ -27,11 +33,11 @@ RUN apt-get update && \
     grub-common dosfstools time rsync gawk file \
     python3-setuptools curl net-tools bind9-dnsutils \
     git iputils-ping traceroute mtr rclone zstd \
-    u-boot-tools gzip xsltproc xxd make libc6-dev \
+    u-boot-tools gzip xxd make libc6-dev pbzip2 \
     gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
     g++-aarch64-linux-gnu device-tree-compiler htop \
-    openssh-server sudo zsh lsb-release gnupg pbzip2 \
-    ${GRUB_PKGS} \
+    openssh-server sudo zsh lsb-release gnupg \
+    ${GRUB_PKGS} mtools dosfstools \
     && apt-get clean && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/run/sshd
 
@@ -79,11 +85,22 @@ RUN sed -i -e 's/#PasswordAuthentication yes/PasswordAuthentication yes/' \
 # Document container port
 EXPOSE 22
 
+# Setup OpenWRT Image Builder
 USER builder
 WORKDIR /builder
-
-# Entrypoint Script
-COPY --chown=builder:builder entrypoint.sh /builder/entrypoint.sh
-RUN chmod +x /builder/entrypoint.sh
-ENTRYPOINT ["/builder/entrypoint.sh"]
+#RUN mkdir -p /builder/OpenWRT-ImageBuilder && \
+#    tar --zstd -xvf /builder/openwrt-imagebuilder-*.tar.zst \
+#    -C /builder/OpenWRT-ImageBuilder --strip-components=1 && \
+#    rm /builder/openwrt-imagebuilder-*.tar.zst
+COPY --chown=builder:builder \
+    resources/openwrt-imagebuilder-*.tar.zst \
+    resources/extractImageBuilder.sh \
+    resources/buildImages.sh \
+    /builder/
+COPY --chown=builder:builder entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x \
+    /usr/local/bin/entrypoint.sh \
+    /builder/extractImageBuilder.sh \
+    /builder/buildImages.sh
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]
