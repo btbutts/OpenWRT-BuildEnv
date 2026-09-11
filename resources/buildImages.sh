@@ -47,16 +47,17 @@ BOOT_EFI_MODS=(
 
 echo "=== Step 1: Cleaning previous build environments ==="
 rm -rf "${STAGING_DIR}" "${OUTPUT_DIR}"
-mkdir -p "${STAGING_DIR}/boot/efi/EFI/BOOT"
-mkdir -p "${STAGING_DIR}/boot/grub/x86_64-efi"
+
+# Isolate the partition workspaces explicitly
+mkdir -p "${STAGING_DIR}/boot_partition/EFI/BOOT"
+mkdir -p "${STAGING_DIR}/root_partition" 
 mkdir -p "${OUTPUT_DIR}"
 
 echo "=== Step 2: Executing OpenWrt Image Builder ==="
 cd "${IMAGE_BUILDER_DIR}"
 make image PROFILE="generic" PACKAGES="${PACKAGES}" ROOTFS_PARTSIZE=256
 
-# Find the newly generated rootfs package
-# Using a wildcard match to grab the standard tar.gz rootfs
+# Locate compiled vanilla artifacts
 VANILLA_ROOTFS=$(find bin/targets/x86/64/ -name "openwrt-*-rootfs.tar.gz" | head -n 1)
 VANILLA_KERNEL=$(find bin/targets/x86/64/ -name "openwrt-*-kernel.bin" | head -n 1)
 
@@ -69,26 +70,32 @@ else
     printf '%-27s %s\n' 'OpenWRT Kernel Located:' "$VANILLA_KERNEL"
 fi
 
-echo "=== Step 3: Extracting Kernel and Staging Boot Architecture ==="
-# Place the kernel directly where OpenWrt updates expect to find it
-cp "${VANILLA_KERNEL}" "${STAGING_DIR}/boot/vmlinuz"
+echo "=== Step 3: Splicing OpenWrt RootFS & Injecting Custom Configurations ==="
+# Unpack the vanilla root archive to our isolated root staging environment
+tar -xzf "${VANILLA_ROOTFS}" -C "${STAGING_DIR}/root_partition"
 
-# Copy all runtime .mod dependency drivers from Debian's library directly
-cp /usr/lib/grub/x86_64-efi/*.mod "${STAGING_DIR}/boot/grub/x86_64-efi/"
+# Ensure target directories exist inside the root filesystem space
+mkdir -p "${STAGING_DIR}/root_partition/boot/grub/x86_64-efi"
 
-echo "=== Step 4: Generating the Generic Boot-linked grub.cfg ==="
-# Fixes the variable partition challenge. We instruct GRUB to search for 
-# a partition explicitly labeled 'OpenWRT-ROOT'.
-# This bypasses the need for hardcoded UUIDs.
-cat << 'EOF' > "${STAGING_DIR}/boot/efi/EFI/BOOT/grub.cfg"
+# Explicitly purge anything lingering in boot/efi inside RootFS, leaving it as a clean mount point anchor
+rm -rf "${STAGING_DIR}/root_partition/boot/efi"
+mkdir -p "${STAGING_DIR}/root_partition/boot/efi"
+
+# Place the kernel directly into /boot/vmlinuz inside Partition 2
+cp "${VANILLA_KERNEL}" "${STAGING_DIR}/root_partition/boot/vmlinuz"
+
+# Copy all runtime .mod drivers into Partition 2 (/boot/grub/x86_64-efi/)
+cp /usr/lib/grub/x86_64-efi/*.mod "${STAGING_DIR}/root_partition/boot/grub/x86_64-efi/"
+
+echo "=== Step 4: Generating the Partition 1 (OpenWRT-BOOT) Early grub.cfg ==="
+cat << 'EOF' > "${STAGING_DIR}/boot_partition/EFI/BOOT/grub.cfg"
 search --no-floppy --label --set=root OpenWRT-ROOT
 set prefix=($root)'/boot/grub'
 configfile $prefix/grub.cfg
 EOF
 
-echo "=== Step 5: Generating the Root OS Partition grub.cfg ==="
-# Creates your working runtime configuration inside the storage mapping space
-cat << 'EOF' > "${STAGING_DIR}/boot/grub/grub.cfg"
+echo "=== Step 5: Generating the Partition 2 (OpenWRT-ROOT) Main System grub.cfg ==="
+cat << 'EOF' > "${STAGING_DIR}/root_partition/boot/grub/grub.cfg"
 set default="0"
 set timeout="2"
 
@@ -101,13 +108,11 @@ menuentry "OpenWrt (RAID 1 Mirror)" {
 EOF
 
 echo "=== Step 6: Compiling the Monolithic EFI Bootstub ==="
-# Bakes your core storage and disk architecture drivers directly into the initial file.
-# The payload maps back to the root boot directory configured above.
 build_efi_bootstub() {
     grub-mkimage \
         -d /usr/lib/grub/x86_64-efi \
         -O x86_64-efi \
-        -o "${STAGING_DIR}/boot/efi/EFI/BOOT/bootx64.efi" \
+        -o "${STAGING_DIR}/boot_partition/EFI/BOOT/bootx64.efi" \
         -p "/boot/grub" \
         "${BOOT_EFI_MODS[@]}"
 }
@@ -115,26 +120,29 @@ build_efi_bootstub() {
 if ! build_efi_bootstub; then
     die 'Failed to generate Monolithic EFI Bootstub with grub-mkimage!'
 else
-    printf '%-27s %s\n' 'Wrote EFI Bootstub:' "${STAGING_DIR}/boot/efi/EFI/BOOT/bootx64.efi"
+    printf '%-27s %s\n' 'Wrote EFI Bootstub:' "${STAGING_DIR}/boot_partition/EFI/BOOT/bootx64.efi"
 fi
 
-echo "=== Step 7: Packaging Your Final Deployable Images ==="
-# 1. Package the custom boot filesystem map
-tar -czf "${OUTPUT_DIR}/openwrt-custom-x86-64-boot.tar.gz" -C "${STAGING_DIR}" boot/
+echo "=== Step 7: Packaging Your Final Isolated Deployable Images ==="
 
-# 2. Package the custom root filesystem map
-# We copy OpenWrt's rootfs tarball out to the workspace for clean deployment delivery
-cp "${VANILLA_ROOTFS}" "${OUTPUT_DIR}/openwrt-custom-x86-64-rootfs.tar.gz"
+
+# 1. Package the OpenWRT-BOOT archive (contains ONLY EFI/BOOT/)
+tar -czf "${OUTPUT_DIR}/openwrt-custom-x86-64-boot.tar.gz" -C "${STAGING_DIR}/boot_partition" EFI/
+
+# 2. Re-tar the RootFS workspace preserving file permissions, including your newly injected components
+tar -czf "${OUTPUT_DIR}/openwrt-custom-x86-64-rootfs.tar.gz" -C "${STAGING_DIR}/root_partition" .
 
 cat << EOF
 =========================================================
 BUILD SUCCESSFUL!
 Your custom deployment archives are waiting inside your output directory:
 ${OUTPUT_DIR}
+
 ‣ openwrt-custom-x86-64-boot.tar.gz
-   └──(Contains: Custom GRUB2 framework, all .mod files, and kernel)
+   └── (Contains ONLY: EFI/BOOT/bootx64.efi & early grub.cfg) -> Extract to Partition 1
+
 ‣ openwrt-custom-x86-64-rootfs.tar.gz
-   └──(Contains: Base OS tree + preconfigured mdadm dependencies)
+   └── (Contains: Base OS, mdadm packages, /boot/vmlinuz, full .mod drivers, and main grub.cfg) -> Extract to Partition 2
 =========================================================
 EOF
 
