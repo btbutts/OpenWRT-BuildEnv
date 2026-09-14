@@ -25,6 +25,7 @@ services:
       - ./buildEnvShare:/builder/workspace:rw
       - ./OpenWRTimagesOut:/builder/OpenWRT-ImageBuilder/bin/targets:rw
       - OpenWRTbuildVolume:/builder/OpenWRT-ImageBuilder:rw
+      - BRbuildVolume:/builder/Buildroot-Builder:rw
 
     # Enable Docker Compose Watch
     develop:
@@ -53,3 +54,4 @@ services:
 
 volumes:
   OpenWRTbuildVolume:
+  BRbuildVolume:

@@ -27,6 +27,7 @@ RUN sed -i '/^Components:/ s/$/ non-free/' \
     bc binutils-gold bison ccache ecj fastjar flex \
     build-essential gcc g++ help2man texinfo vim nano \
     libbsd-dev libelf-dev libncurses-dev zlib1g-dev \
+    ncurses-dev python3-flake8 bzip2 ca-certificates \
     liblzma-dev mtd-utils meson mold ninja-build \
     pigz pkg-config python3-dev subversion swig \
     gettext libssl-dev xsltproc wget unzip python3 \
@@ -37,7 +38,7 @@ RUN sed -i '/^Components:/ s/$/ non-free/' \
     gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
     g++-aarch64-linux-gnu device-tree-compiler htop \
     openssh-server sudo zsh lsb-release gnupg \
-    ${GRUB_PKGS} mtools dosfstools \
+    ${GRUB_PKGS} mtools dosfstools cpio gperf \
     && apt-get clean && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/run/sshd
 
@@ -96,11 +97,19 @@ COPY --chown=builder:builder \
     resources/openwrt-imagebuilder-*.tar.zst \
     resources/extractImageBuilder.sh \
     resources/buildImages.sh \
+    resources/getBuildroot.sh \
+    resources/compileBuildroot.sh \
     /builder/
-COPY --chown=builder:builder entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --chown=builder:builder \
+    resources/buildrootConf \
+    /builder/buildrootConf/
+COPY --chown=builder:builder \
+    entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x \
     /usr/local/bin/entrypoint.sh \
     /builder/extractImageBuilder.sh \
-    /builder/buildImages.sh
+    /builder/compileBuildroot.sh \
+    /builder/buildImages.sh \
+    /builder/getBuildroot.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]

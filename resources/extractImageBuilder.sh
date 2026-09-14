@@ -12,7 +12,7 @@ mkdir -p "$TARGET_DIR"
 if [ ! -f "$MARKER_FILE" ]; then
 
     # Set permissions so the 'builder' user owns OpenWRT Image Builder
-    sudo mkdir -p /builder/OpenWRT-ImageBuilder
+    sudo mkdir -p "$TARGET_DIR"
     sudo chown -R builder:builder /builder
 
     echo "First boot detected: Extracting OpenWRT Image Builder..."
@@ -40,3 +40,5 @@ else
     echo "OpenWRT Image Builder already extracted. Skipping."
     sudo chown -R builder:builder /builder
 fi
+
+exit 0

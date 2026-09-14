@@ -1,0 +1,63 @@
+#!/bin/bash
+set -e
+
+BR_PATH="/builder/Buildroot-Builder"
+SCRIPTS_POOL="/builder/buildrootConf"
+OVERLAY_DIR="${BR_PATH}/system/skeleton_overlay"
+
+# 2. Establish layout overlay pipeline trees
+mkdir -p "${OVERLAY_DIR}/usr/bin" "${OVERLAY_DIR}/etc/init.d"
+
+# 3. Inject installer user-space assets
+if [ -f "${SCRIPTS_POOL}/iTUI/wizard.sh" ] && [ -f "${SCRIPTS_POOL}/automation/setup.sh" ]; then
+    cp "${SCRIPTS_POOL}/iTUI/wizard.sh" "${OVERLAY_DIR}/usr/bin/wizard.sh"
+    cp "${SCRIPTS_POOL}/automation/setup.sh" "${OVERLAY_DIR}/usr/bin/setup.sh"
+    chmod +x "${OVERLAY_DIR}/usr/bin/wizard.sh" "${OVERLAY_DIR}/usr/bin/setup.sh"
+fi
+
+# 4. Write standard system daemon initialization script
+cat << 'EOF' > "${OVERLAY_DIR}/etc/init.d/S99installer"
+#!/bin/sh
+case "$1" in
+    start)
+        # Force script attachment to the primary system video output console terminal
+        /usr/bin/wizard.sh < /dev/tty1 > /dev/tty1 2>&1
+        ;;
+    stop)
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}"
+        exit 1
+esac
+exit 0
+EOF
+chmod +x "${OVERLAY_DIR}/etc/init.d/S99installer"
+
+# 5. Load and evaluate target configurations
+cd "$BR_PATH"
+
+if [ -f "${SCRIPTS_POOL}/setup.config" ]; then
+    cp "${SCRIPTS_POOL}/setup.config" configs/installer_defconfig
+    
+    if [ -f "${SCRIPTS_POOL}/kernelOptions.config" ]; then
+        cp "${SCRIPTS_POOL}/kernelOptions.config" kernelOptions.config
+    fi
+    make installer_defconfig
+else
+    echo "--> setup.config not detected. Standardizing on basic x86_64 topology..."
+    make qemu_x86_64_defconfig
+fi
+
+# 6. Fire off specialized multi-threaded build pipeline pass
+echo "--> Compiling specialized cross-toolchain and kernel utilities..."
+make -j"$(nproc)"
+
+# 7. Map final deployment components directly to your shared Mac volume
+cd "$BR_PATH"
+echo "--> Exporting final installer assets out to Mac mount..."
+cp /builder/Buildroot-Builder/output/images/bzImage \
+    /builder/workspace/output/buildroot/vmlinuz-installer
+cp /builder/Buildroot-Builder/output/images/rootfs.cpio.* \
+    /builder/workspace/output/buildroot/initramfs-installer.img
+
+exit 0
