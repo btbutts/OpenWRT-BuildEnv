@@ -12,6 +12,10 @@ taken from the URL (right-to-left until '/', '=', or an invalid filename
 character). An existing file is overwritten only when its SHA-256 differs
 from the freshly downloaded copy.
 
+When running in GitHub Actions, the step output ``changed`` is written to
+``$GITHUB_OUTPUT`` as ``true`` if a file was created or overwritten, and
+``false`` if the local SHA-256 already matched.
+
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import io
+import os
 import sys
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -32,6 +37,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 MEMORY_LIMIT_BYTES = 250 * 1024 * 1024  # 250 MiB
 CHUNK_SIZE = 8192
 HTTP_TIMEOUT_SECONDS = 120
+GITHUB_OUTPUT_CHANGED = "changed"
 
 # Characters that terminate the filename scan. Includes path/query
 # delimiters plus characters illegal in Windows, macOS, or Linux names.
@@ -126,6 +132,22 @@ def parse_content_length(headers) -> int | None:
     if length < 0:
         return None
     return length
+
+
+def write_github_output(changed: bool) -> None:
+    """Append the ``changed`` step output when running under GitHub Actions.
+
+    No-op locally: ``GITHUB_OUTPUT`` is only set inside a workflow step.
+    Values are the lowercase strings Actions ``if:`` expressions compare
+    against (``true`` / ``false``), not Python booleans.
+    """
+    output_path = os.environ.get("GITHUB_OUTPUT")
+    if not output_path:
+        return
+    value = "true" if changed else "false"
+    with open(output_path, "a", encoding="utf-8") as handle:
+        handle.write(f"{GITHUB_OUTPUT_CHANGED}={value}\n")
+    log(f"GitHub output      : {GITHUB_OUTPUT_CHANGED}={value}")
 
 
 class ProgressMeter:
@@ -481,6 +503,8 @@ def main(argv: list[str] | None = None) -> int:
         log(f"Overwrote file     : {dest}\n(SHA-256 differed)")
     else:
         log(f"Left file intact   : {dest}\n(SHA-256 matched; download discarded)")
+
+    write_github_output(changed=result in {"created", "updated"})
     return 0
 
 
