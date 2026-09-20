@@ -99,6 +99,7 @@ COPY --chown=builder:builder \
     resources/buildImages.sh \
     resources/getBuildroot.sh \
     resources/compileBuildroot.sh \
+    resources/buildInstallerUSB.sh \
     /builder/
 COPY --chown=builder:builder \
     resources/buildrootConf \
@@ -110,6 +111,7 @@ RUN chmod +x \
     /builder/extractImageBuilder.sh \
     /builder/compileBuildroot.sh \
     /builder/buildImages.sh \
-    /builder/getBuildroot.sh
+    /builder/getBuildroot.sh \
+    /builder/buildInstallerUSB.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]

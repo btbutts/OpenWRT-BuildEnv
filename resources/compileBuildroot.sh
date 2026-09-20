@@ -3,10 +3,11 @@ set -e
 
 BR_PATH="/builder/Buildroot-Builder"
 SCRIPTS_POOL="/builder/buildrootConf"
-OVERLAY_DIR="${BR_PATH}/system/skeleton_overlay"
+#OVERLAY_DIR="${BR_PATH}/system/skeleton_overlay"
+OVERLAY_DIR="${BR_PATH}/../buildrootConf/rootfs-overlay"
 
 # 2. Establish layout overlay pipeline trees
-mkdir -p "${OVERLAY_DIR}/usr/bin" "${OVERLAY_DIR}/etc/init.d"
+mkdir -p "${OVERLAY_DIR}/usr/bin" "${OVERLAY_DIR}/etc/init.d" "${OVERLAY_DIR}/usr/share/vim"
 
 # 3. Inject installer user-space assets
 if [ -f "${SCRIPTS_POOL}/iTUI/wizard.sh" ] && [ -f "${SCRIPTS_POOL}/automation/setup.sh" ]; then

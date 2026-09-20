@@ -1,0 +1,7 @@
+" Vim5 and later versions support syntax highlighting. Uncommenting the next
+" line enables syntax highlighting by default.
+syntax on
+
+" Uncomment the following to have Vim load indentation rules and plugins
+" according to the detected filetype.
+filetype plugin indent on

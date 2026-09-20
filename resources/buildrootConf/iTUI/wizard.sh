@@ -96,11 +96,54 @@ SIZE_CHOICE=$(dialog --stdout --menu "Configure ROOT Partition Size:" 10 60 2 \
     "MAX" "Use all remaining disk space" \
     "CUSTOM" "Specify custom size in Gigabytes")
 
+# Extract the base device tracking identifier
+# for capacity calculations (e.g., sdb, nvme0n1)
+FIRST_DISK="${DISK_ARRAY[0]}"
+
+# Fetch total disk size in GiB
+DISK_BYTES=$(lsblk -bndo SIZE "/dev/$FIRST_DISK" | head -n1)
+TOTAL_DISK_GB=$(( DISK_BYTES / 1024 / 1024 / 1024 ))
+# Calculate max OpenWRT-ROOT partition size
+MAX_AVAILABLE_ROOT_GB=$(( TOTAL_DISK_GB - 2 ))
+
 if [[ "$SIZE_CHOICE" == "CUSTOM" ]]; then
     ROOT_SIZE=$(dialog --stdout --inputbox "Enter ROOT partition size per disk (in GB):" 8 50 "20")
     ROOT_PART_END="+${ROOT_SIZE}G"
+    ESTIMATED_ROOT_GB=$ROOT_SIZE
 else
     ROOT_PART_END="" # Consumes remaining space
+    ESTIMATED_ROOT_GB=$MAX_AVAILABLE_ROOT_GB
+fi
+
+# Ask for Write-Intent Bitmap Config
+# >=150GiB defaults to write-intent bitmap enabled
+
+
+if [ "$ESTIMATED_ROOT_GB" -ge 150 ]; then
+    # Default selection state mapping targeting the YES button
+    printf -v PROMPT_TEXT "%s\n\n%s%s\n\n%s\n" \
+        "Your estimated target ROOT array size (${ESTIMATED_ROOT_GB} GB) is >= 150 GB." \
+        "Enabling a write-intent bitmap optimizes array reconstruction speeds after a power failure, " \
+        "but adds a minute write latency overhead." \
+        "Do you want to ENABLE the internal write-intent bitmap?"
+    
+    if dialog --defaultyes --yes-label "Enable" --no-label "Disable" --yesno "$PROMPT_TEXT" 12 65; then
+        ROOT_BITMAP_MODE="internal"
+    else
+        ROOT_BITMAP_MODE="none"
+    fi
+else
+    printf -v PROMPT_TEXT "%s\n\n%s%s\n\n%s\n" \
+        "Your estimated target ROOT array size (${ESTIMATED_ROOT_GB} GB) is less than 150 GB." \
+        "Bitmaps are generally discouraged on smaller storage volumes because the write performance " \
+        "tax outweighs recovery gains." \
+        "Do you want to override defaults and ENABLE the internal write-intent bitmap anyway?"
+    
+    if dialog --defaultno --yes-label "Enable" --no-label "Disable" --yesno "$PROMPT_TEXT" 12 65; then
+        ROOT_BITMAP_MODE="internal"
+    else
+        ROOT_BITMAP_MODE="none"
+    fi
 fi
 
 # Confirm execution pass
@@ -112,4 +155,4 @@ fi
 
 # Hand off to setup.sh with wizard arguments
 clear
-exec /usr/bin/setup.sh "$ROOT_RAID_LEVEL" "$ROOT_PART_END" "${DISK_ARRAY[@]}"
+exec /usr/bin/setup.sh "$ROOT_RAID_LEVEL" "$ROOT_PART_END" "$ROOT_BITMAP_MODE" "${DISK_ARRAY[@]}"

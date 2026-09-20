@@ -89,7 +89,7 @@ cp /usr/lib/grub/x86_64-efi/*.mod "${STAGING_DIR}/root_partition/boot/grub/x86_6
 
 echo "=== Step 4: Generating the Partition 1 (OpenWRT-BOOT) Early grub.cfg ==="
 cat << 'EOF' > "${STAGING_DIR}/boot_partition/EFI/BOOT/grub.cfg"
-search --no-floppy --label --set=root OpenWRT-ROOT
+search --no-floppy --label --set=root OpenWRTroot
 set prefix=($root)'/boot/grub'
 configfile $prefix/grub.cfg
 EOF
@@ -100,7 +100,7 @@ set default="0"
 set timeout="2"
 
 # Locate the root filesystem by its filesystem label
-search --no-floppy --label --set=root OpenWRT-ROOT
+search --no-floppy --label --set=root OpenWRTroot
 
 menuentry "OpenWrt (RAID 1 Mirror)" {
     linux /boot/vmlinuz root=/dev/md0 rootwait console=tty0 console=ttyS0,115200n8 noinitrd
