@@ -13,6 +13,25 @@ IMAGE_BUILDER_DIR="/builder/OpenWRT-ImageBuilder"
 STAGING_DIR="${WORKSPACE}/staging"
 OUTPUT_DIR="${WORKSPACE}/output"
 
+# Optional: ./buildOpenWRTimages.sh --clean  OR  ./buildOpenWRTimages.sh -C
+CLEAN=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --clean|-C)
+            CLEAN=1
+            shift
+            ;;
+        -h|--help)
+            printf 'Usage: %s [--clean|-C]\n' "${0##*/}"
+            printf '  --clean, -C    Wipe staging and output directories before building\n'
+            exit 0
+            ;;
+        *)
+            die "Unknown argument: $1 (try --help)"
+            ;;
+    esac
+done
+
 # Define your downstream package choices
 # Adding kmod-md-raid1, mdadm, and ext4 filesystem drivers
 PACKAGES="-wpad-basic-mbedtls kmod-md-raid1 kmod-md-raid0 mdadm \
@@ -45,8 +64,12 @@ BOOT_EFI_MODS=(
     configfile ntfs usb btrfs exfat
 )
 
-echo "=== Step 1: Cleaning previous build environments ==="
-rm -rf "${STAGING_DIR}" "${OUTPUT_DIR}"
+if [[ "$CLEAN" -eq 1 ]]; then
+    echo "=== Step 1: Cleaning previous build environments ==="
+    rm -rf "${STAGING_DIR}" "${OUTPUT_DIR}"
+else
+    echo "=== Step 1: Reusing previous build environments (pass --clean or -C to wipe) ==="
+fi
 
 # Isolate the partition workspaces explicitly
 mkdir -p "${STAGING_DIR}/boot_partition/EFI/BOOT"
@@ -89,8 +112,13 @@ cp /usr/lib/grub/x86_64-efi/*.mod "${STAGING_DIR}/root_partition/boot/grub/x86_6
 
 echo "=== Step 4: Generating the Partition 1 (OpenWRT-BOOT) Early grub.cfg ==="
 cat << 'EOF' > "${STAGING_DIR}/boot_partition/EFI/BOOT/grub.cfg"
-search --no-floppy --label --set=root OpenWRTroot
-set prefix=($root)'/boot/grub'
+insmod mdraid1x
+insmod ext2
+
+# Locate OpenWRT-ROOT md1 madm RAID partition
+# (RAID 1 Mirror) via its filesystem label
+search --no-floppy --label --set=root OpenWRT-ROOT
+set prefix=($root)/boot/grub
 configfile $prefix/grub.cfg
 EOF
 
@@ -100,10 +128,10 @@ set default="0"
 set timeout="2"
 
 # Locate the root filesystem by its filesystem label
-search --no-floppy --label --set=root OpenWRTroot
+search --no-floppy --label --set=root OpenWRT-ROOT
 
-menuentry "OpenWrt (RAID 1 Mirror)" {
-    linux /boot/vmlinuz root=/dev/md0 rootwait console=tty0 console=ttyS0,115200n8 noinitrd
+menuentry "OpenWRT (RAID 1 Mirror)" {
+    linux /boot/vmlinuz root=/dev/md1 rootwait console=tty0 console=ttyS0,115200n8 noinitrd
 }
 EOF
 

@@ -100,8 +100,8 @@ sleep 6s
 
 # Step 4: Create Array Filesystems
 echo "--> Creating target filesystems and partition labels..."
-mkfs.vfat -F 32 -n "OpenWRTboot" /dev/md0
-mkfs.ext4 -F -L "OpenWRTroot" /dev/md1
+mkfs.vfat -F 32 -n "BOOT" /dev/md0
+mkfs.ext4 -F -L "OpenWRT-ROOT" /dev/md1
 
 
 

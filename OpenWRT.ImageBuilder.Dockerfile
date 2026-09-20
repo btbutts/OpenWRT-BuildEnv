@@ -96,7 +96,7 @@ WORKDIR /builder
 COPY --chown=builder:builder \
     resources/openwrt-imagebuilder-*.tar.zst \
     resources/extractImageBuilder.sh \
-    resources/buildImages.sh \
+    resources/buildOpenWRTimages.sh \
     resources/getBuildroot.sh \
     resources/compileBuildroot.sh \
     resources/buildInstallerUSB.sh \
@@ -110,7 +110,7 @@ RUN chmod +x \
     /usr/local/bin/entrypoint.sh \
     /builder/extractImageBuilder.sh \
     /builder/compileBuildroot.sh \
-    /builder/buildImages.sh \
+    /builder/buildOpenWRTimages.sh \
     /builder/getBuildroot.sh \
     /builder/buildInstallerUSB.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

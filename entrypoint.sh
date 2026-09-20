@@ -16,14 +16,14 @@ print_dots() {
             ".") dots=".." ;;
             *)   dots="..." ;;
         esac
-        printf '\r%-50s' "--> Running: ${label}${dots}"
+        printf '\r%-62s' "--> Running: ${label}${dots}"
         sleep 0.5
     done
 
     task_status=0
     wait "$task_pid" || task_status=$?
 
-    printf '\r%-50s' "--> Running: ${label}..."
+    printf '\r%-62s' "--> Running: ${label}..."
 }
 
 prepare_sshd() {
@@ -39,10 +39,22 @@ start_sshd() {
     sudo /usr/sbin/sshd
 }
 
+build_openwrt_fs() {
+    local output_dir="/builder/workspace/output"
+    local bootfs="${output_dir}/openwrt-custom-x86-64-boot.tar.gz"
+    local rootfs="${output_dir}/openwrt-custom-x86-64-rootfs.tar.gz"
+
+    if [ -f "$bootfs" ] && [ -f "$rootfs" ]; then
+        return 0
+    fi
+    ./buildOpenWRTimages.sh
+}
+
 #    "/builder/compileBuildroot.sh|Compile Installer Media Platform"
 STARTUP_SEQUENCE=(
     "/builder/extractImageBuilder.sh|Setup OpenWRT Image Builder"
     "/builder/getBuildroot.sh|Setup Buildroot Environment"
+    "build_openwrt_fs|Verifying or Preparing OpenWRT Filesystem"
     "prepare_sshd|Preparing to start OpenSSH Daemon"
     "start_sshd|Starting OpenSSH Daemon"
 )
@@ -64,7 +76,7 @@ for tasks in "${STARTUP_SEQUENCE[@]}"; do
     fi
 
     # Output entrypoint step to console
-    printf '%-50s' "--> Running: $label"
+    printf '%-62s' "--> Running: $label"
     "$task" >"$log_file" 2>&1 &
     task_pid=$!
     print_dots

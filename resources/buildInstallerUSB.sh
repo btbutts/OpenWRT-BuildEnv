@@ -28,7 +28,7 @@ if [ -f "${OPENWRT_ASSETS}/openwrt-custom-x86-64-boot.tar.gz" ] && [ -f "${OPENW
     echo "--> Successfully staged and renamed production OpenWRT dependencies."
 else
     echo "WARNING: Production OpenWRT tarballs not found inside ${OPENWRT_ASSETS}." >&2
-    echo "         Make sure to execute buildImages.sh before copying this layout to your physical USB drive." >&2
+    echo "         Make sure to execute buildOpenWRTimages.sh before copying this layout to your physical USB drive." >&2
 fi
 
 # Step 3: Generate the custom embedded GRUB.cfg steering loop
