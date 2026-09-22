@@ -5,6 +5,14 @@ BR_PATH="/builder/Buildroot-Builder"
 SCRIPTS_POOL="/builder/buildrootConf"
 #OVERLAY_DIR="${BR_PATH}/system/skeleton_overlay"
 OVERLAY_DIR="${BR_PATH}/../buildrootConf/rootfs-overlay"
+REBUILD_LINUX=0
+for arg in "$@"; do
+    case "$arg" in
+        --rebuild-linux) REBUILD_LINUX=1 ;;
+        --renew-config) ;; # kept as an alias; copy+installer_defconfig already renews BR2
+        *) echo "Unknown argument: $arg" >&2; exit 2 ;;
+    esac
+done
 
 # 2. Establish layout overlay pipeline trees
 mkdir -p "${OVERLAY_DIR}/usr/bin" "${OVERLAY_DIR}/etc/init.d" "${OVERLAY_DIR}/usr/share/vim"
@@ -18,7 +26,7 @@ fi
 
 # 4. Write standard system daemon initialization script
 cat << 'EOF' > "${OVERLAY_DIR}/etc/init.d/S99installer"
-#!/bin/sh
+#!/bin/bash
 case "$1" in
     start)
         # Force script attachment to the primary system video output console terminal
@@ -38,15 +46,23 @@ chmod +x "${OVERLAY_DIR}/etc/init.d/S99installer"
 cd "$BR_PATH"
 
 if [ -f "${SCRIPTS_POOL}/setup.config" ]; then
-    cp "${SCRIPTS_POOL}/setup.config" configs/installer_defconfig
+    cp "${SCRIPTS_POOL}/setup.config" "${BR_PATH}/configs/installer_defconfig"
     
     if [ -f "${SCRIPTS_POOL}/kernelOptions.config" ]; then
-        cp "${SCRIPTS_POOL}/kernelOptions.config" kernelOptions.config
+        cp "${SCRIPTS_POOL}/kernelOptions.config" "${BR_PATH}/kernelOptions.config"
     fi
     make installer_defconfig
+    make olddefconfig
 else
     echo "--> setup.config not detected. Standardizing on basic x86_64 topology..."
     make qemu_x86_64_defconfig
+fi
+
+if [[ "${REBUILD_LINUX}" == 1 ]]; then
+    make linux-reconfigure
+    grep -E 'CONFIG_EXPERT|CONFIG_DRM_AMDGPU|CONFIG_SND_HDA_INTEL|CONFIG_USB_HID|CONFIG_SCSI=' \
+        output/build/linux-*/.config || true
+    make linux-rebuild
 fi
 
 # 6. Fire off specialized multi-threaded build pipeline pass

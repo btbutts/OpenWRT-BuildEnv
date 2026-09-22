@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+echo "installer shell=$0 bash=${BASH_VERSION:-NOT_BASH} exe=$(readlink -f /proc/self/exe)" > /dev/tty1
+
 # --- Tier 1: Identify the Installer USB / Deployment Source Media ---
 INSTALLER_DISK=""
 
@@ -119,31 +121,32 @@ fi
 # >=150GiB defaults to write-intent bitmap enabled
 
 
+# Ask for write-intent bitmap. Default follows array size; user can still override.
 if [ "$ESTIMATED_ROOT_GB" -ge 150 ]; then
-    # Default selection state mapping targeting the YES button
+    BITMAP_DEFAULT_BUTTON="yes"
     printf -v PROMPT_TEXT "%s\n\n%s%s\n\n%s\n" \
         "Your estimated target ROOT array size (${ESTIMATED_ROOT_GB} GB) is >= 150 GB." \
         "Enabling a write-intent bitmap optimizes array reconstruction speeds after a power failure, " \
         "but adds a minute write latency overhead." \
         "Do you want to ENABLE the internal write-intent bitmap?"
-    
-    if dialog --defaultyes --yes-label "Enable" --no-label "Disable" --yesno "$PROMPT_TEXT" 12 65; then
-        ROOT_BITMAP_MODE="internal"
-    else
-        ROOT_BITMAP_MODE="none"
-    fi
 else
+    BITMAP_DEFAULT_BUTTON="no"
     printf -v PROMPT_TEXT "%s\n\n%s%s\n\n%s\n" \
         "Your estimated target ROOT array size (${ESTIMATED_ROOT_GB} GB) is less than 150 GB." \
         "Bitmaps are generally discouraged on smaller storage volumes because the write performance " \
         "tax outweighs recovery gains." \
         "Do you want to override defaults and ENABLE the internal write-intent bitmap anyway?"
-    
-    if dialog --defaultno --yes-label "Enable" --no-label "Disable" --yesno "$PROMPT_TEXT" 12 65; then
-        ROOT_BITMAP_MODE="internal"
-    else
-        ROOT_BITMAP_MODE="none"
-    fi
+fi
+
+if dialog \
+    --default-button "$BITMAP_DEFAULT_BUTTON" \
+    --yes-label "Enable" \
+    --no-label "Disable" \
+    --yesno "$PROMPT_TEXT" 14 65
+then
+    ROOT_BITMAP_MODE="internal"
+else
+    ROOT_BITMAP_MODE="none"
 fi
 
 # Confirm execution pass

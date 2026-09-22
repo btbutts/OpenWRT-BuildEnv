@@ -47,16 +47,21 @@ insmod serial
 insmod video
 insmod font
 
+set installer_cmdline="console=tty1 \
+    amdgpu.modeset=0 radeon.modeset=0 \
+    nouveau.modeset=0 i915.modeset=0 \
+    modprobe.blacklist=amdgpu,radeon,nouveau,i915,snd_hda_intel,snd_hda_codec_hdmi"
+
 menuentry "Execute Bare-Metal OpenWRT Deployment Engine" --class linux {
     echo "Loading customized system installer kernel..."
     search --no-floppy --file --set=root /boot/vmlinuz-installer
-    linux /boot/vmlinuz-installer console=tty1 quiet
+    linux /boot/vmlinuz-installer ${installer_cmdline} quiet
 }
 
 menuentry "Emergency Hardware Maintenance Shell" --class shell {
     echo "Loading kernel in diagnostic maintenance framework mode..."
     search --no-floppy --file --set=root /boot/vmlinuz-installer
-    linux /boot/vmlinuz-installer console=tty1 single
+    linux /boot/vmlinuz-installer ${installer_cmdline} single
 }
 EOF
 

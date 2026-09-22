@@ -40,14 +40,24 @@ start_sshd() {
 }
 
 build_openwrt_fs() {
-    local output_dir="/builder/workspace/output"
-    local bootfs="${output_dir}/openwrt-custom-x86-64-boot.tar.gz"
-    local rootfs="${output_dir}/openwrt-custom-x86-64-rootfs.tar.gz"
+    local image_dir vanilla_rootfs vanilla_kernel
+    image_dir="/builder/OpenWRT-ImageBuilder"
+    vanilla_rootfs=$(find ${image_dir}/bin/targets/x86/64/ -name "openwrt-*-rootfs.tar.gz" | head -n 1)
+    vanilla_kernel=$(find ${image_dir}/bin/targets/x86/64/ -name "openwrt-*-kernel.bin" | head -n 1)
 
-    if [ -f "$bootfs" ] && [ -f "$rootfs" ]; then
+    if [ -f "$vanilla_kernel" ] && [ -f "$vanilla_rootfs" ]; then
+        printf '%s\n%s\n%s\n' \
+            "Found vanilla kernel: $vanilla_kernel" \
+            "Found vanilla rootfs: $vanilla_rootfs" \
+            "Repackaging only with \"--package-only\" option"
+        ./buildOpenWRTimages.sh --package-only
         return 0
+    else
+        printf '%s\n%s\n' \
+            "Either the vanilla kernel or rootfs were not found!" \
+            "Building OpenWRT images from existing sources"
+        ./buildOpenWRTimages.sh
     fi
-    ./buildOpenWRTimages.sh
 }
 
 #    "/builder/compileBuildroot.sh|Compile Installer Media Platform"

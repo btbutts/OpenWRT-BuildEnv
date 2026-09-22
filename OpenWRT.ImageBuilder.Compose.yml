@@ -4,7 +4,7 @@ services:
     container_name: openwrt_build_environment
     hostname: OpenWRT-Builder
     image: ghcr.io/btbutts/openwrt-buildenv:latest
-    pull_policy: always
+    pull_policy: missing
     build:
       context: .
       dockerfile: OpenWRT.ImageBuilder.Dockerfile

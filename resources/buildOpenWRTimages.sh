@@ -13,17 +13,24 @@ IMAGE_BUILDER_DIR="/builder/OpenWRT-ImageBuilder"
 STAGING_DIR="${WORKSPACE}/staging"
 OUTPUT_DIR="${WORKSPACE}/output"
 
-# Optional: ./buildOpenWRTimages.sh --clean  OR  ./buildOpenWRTimages.sh -C
+# Optional: ./buildOpenWRTimages.sh --clean|-C
+#           ./buildOpenWRTimages.sh --package-only
 CLEAN=0
+PACKAGE_ONLY=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --clean|-C)
             CLEAN=1
             shift
             ;;
+        --package-only)
+            PACKAGE_ONLY=1
+            shift
+            ;;
         -h|--help)
-            printf 'Usage: %s [--clean|-C]\n' "${0##*/}"
-            printf '  --clean, -C    Wipe staging and output directories before building\n'
+            printf 'Usage: %s [--clean|-C | --package-only]\n' "${0##*/}"
+            printf '  --clean, -C       Wipe staging and output directories before building\n'
+            printf '  --package-only    Skip Image Builder make; repackage existing artifacts\n'
             exit 0
             ;;
         *)
@@ -31,6 +38,10 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ "$CLEAN" -eq 1 && "$PACKAGE_ONLY" -eq 1 ]]; then
+    die '--package-only and --clean are incompatible'
+fi
 
 # Define your downstream package choices
 # Adding kmod-md-raid1, mdadm, and ext4 filesystem drivers
@@ -61,7 +72,7 @@ smartmontools lm-sensors rng-tools kmod-tls"
 BOOT_EFI_MODS=(
     part_gpt part_msdos mdraid1x mdraid09 ext2 part_apple 
     part_bsd fat search search_label search_fs_uuid search_fs_file 
-    configfile ntfs usb btrfs exfat
+    configfile ntfs usb btrfs exfat linux
 )
 
 if [[ "$CLEAN" -eq 1 ]]; then
@@ -78,7 +89,9 @@ mkdir -p "${OUTPUT_DIR}"
 
 echo "=== Step 2: Executing OpenWrt Image Builder ==="
 cd "${IMAGE_BUILDER_DIR}"
-make image PROFILE="generic" PACKAGES="${PACKAGES}" ROOTFS_PARTSIZE=256
+if [[ "$PACKAGE_ONLY" -ne 1 ]]; then
+    make image PROFILE="generic" PACKAGES="${PACKAGES}" ROOTFS_PARTSIZE=256
+fi
 
 # Locate compiled vanilla artifacts
 VANILLA_ROOTFS=$(find bin/targets/x86/64/ -name "openwrt-*-rootfs.tar.gz" | head -n 1)
@@ -125,13 +138,15 @@ EOF
 echo "=== Step 5: Generating the Partition 2 (OpenWRT-ROOT) Main System grub.cfg ==="
 cat << 'EOF' > "${STAGING_DIR}/root_partition/boot/grub/grub.cfg"
 set default="0"
-set timeout="2"
+set timeout="6"
 
 # Locate the root filesystem by its filesystem label
 search --no-floppy --label --set=root OpenWRT-ROOT
 
 menuentry "OpenWRT (RAID 1 Mirror)" {
-    linux /boot/vmlinuz root=/dev/md1 rootwait console=tty0 console=ttyS0,115200n8 noinitrd
+    insmod mdraid1x
+    insmod ext2
+    linux /boot/vmlinuz root=LABEL=OpenWRT-ROOT rootwait @MD_ASSEMBLY_TOKEN@ console=tty0 console=ttyS0,115200n8 noinitrd
 }
 EOF
 
