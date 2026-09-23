@@ -10,6 +10,8 @@ for arg in "$@"; do
     case "$arg" in
         --rebuild-linux) REBUILD_LINUX=1 ;;
         --renew-config) ;; # kept as an alias; copy+installer_defconfig already renews BR2
+        --rebuild-linux-clean) REBUILD_LINUX=2 ;;
+        --compiler-cache-clean) DEL_CCACHE=1 ;;
         *) echo "Unknown argument: $arg" >&2; exit 2 ;;
     esac
 done
@@ -58,7 +60,25 @@ else
     make qemu_x86_64_defconfig
 fi
 
-if [[ "${REBUILD_LINUX}" == 1 ]]; then
+if [[ "${DEL_CCACHE}" -eq 1 ]]; then
+    printf '%s\n' "'--compiler-cache-clean' called: Cleaning up Buildroot compiler cache..."
+    rm -rf /builder/Buildroot-Builder/.buildroot-ccache/.* \
+        /builder/Buildroot-Builder/.buildroot-ccache/*.*
+fi
+
+if [[ "${REBUILD_LINUX}" -eq 2 ]]; then
+    printf '%s\n' "Rebuilding Linux kernel from scratch: Cleaning up previous Linux kernel build artifacts..."
+    make linux-dirclean
+    make linux-firmware-dirclean
+    rm -rf output/target/lib/firmware \
+        output/images/amdgpu output/images/radeon output/images/xe \
+        output/images/i915 output/images/amd-ucode output/images/intel-ucode \
+        output/images/rootfs.cpio.zst output/images/rootfs.cpio \
+        output/images/bzImage output/images/rootfs.tar
+fi
+
+if [[ "${REBUILD_LINUX}" =~ ^(1|2)$ ]]; then
+    printf '%s\n' "Reconfiguring and rebuilding the Linux kernel..."
     make linux-reconfigure
     grep -E 'CONFIG_EXPERT|CONFIG_DRM_AMDGPU|CONFIG_SND_HDA_INTEL|CONFIG_USB_HID|CONFIG_SCSI=' \
         output/build/linux-*/.config || true

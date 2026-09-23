@@ -10,12 +10,20 @@ rm -rf "$STAGING_DIR"
 mkdir -p "${STAGING_DIR}/EFI/BOOT"
 mkdir -p "${STAGING_DIR}/boot"
 
-# Step 1: Copy over your freshly compiled Buildroot installer kernel
+# Step 1: Copy over your freshly compiled Buildroot installer kernel and initramfs
 echo "--> Staging compiled kernel architecture payload..."
 if [ -f "${BUILDROOT_ASSETS}/vmlinuz-installer" ]; then
     cp "${BUILDROOT_ASSETS}/vmlinuz-installer" "${STAGING_DIR}/boot/vmlinuz-installer"
 else
     echo "ERROR: vmlinuz-installer asset missing from Buildroot output directory!" >&2
+    exit 1
+fi
+
+echo "--> Staging compiled initramfs payload..."
+if [ -f "${BUILDROOT_ASSETS}/initramfs-installer.img" ]; then
+    cp "${BUILDROOT_ASSETS}/initramfs-installer.img" "${STAGING_DIR}/boot/initramfs-installer.img"
+else
+    echo "ERROR: initramfs-installer.img asset missing from Buildroot output directory!" >&2
     exit 1
 fi
 
@@ -47,21 +55,22 @@ insmod serial
 insmod video
 insmod font
 
-set installer_cmdline="console=tty1 \
-    amdgpu.modeset=0 radeon.modeset=0 \
-    nouveau.modeset=0 i915.modeset=0 \
-    modprobe.blacklist=amdgpu,radeon,nouveau,i915,snd_hda_intel,snd_hda_codec_hdmi"
+set installer_cmdline="console=tty0 loglevel=7"
 
 menuentry "Execute Bare-Metal OpenWRT Deployment Engine" --class linux {
     echo "Loading customized system installer kernel..."
     search --no-floppy --file --set=root /boot/vmlinuz-installer
-    linux /boot/vmlinuz-installer ${installer_cmdline} quiet
+    linux /boot/vmlinuz-installer ${installer_cmdline}
+    echo "Loading ramdisk..."
+    initrd /boot/initramfs-installer.img
 }
 
 menuentry "Emergency Hardware Maintenance Shell" --class shell {
     echo "Loading kernel in diagnostic maintenance framework mode..."
     search --no-floppy --file --set=root /boot/vmlinuz-installer
     linux /boot/vmlinuz-installer ${installer_cmdline} single
+    echo "Loading ramdisk..."
+    initrd /boot/initramfs-installer.img
 }
 EOF
 
