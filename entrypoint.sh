@@ -7,6 +7,8 @@ unsetopt MONITOR NOTIFY 2>/dev/null || true
 
 BOLD=$'\033[1m'
 RESET=$'\033[0m'
+CLEAR_TO_EOL=$'\033[K'
+COL_WIDTH=62
 
 print_dots() {
     dots=""
@@ -16,14 +18,15 @@ print_dots() {
             ".") dots=".." ;;
             *)   dots="..." ;;
         esac
-        printf '\r%-62s' "--> Running: ${label}${dots}"
+        #printf '\r%-62s' "--> Running: ${label}${dots}"
+        printf '\r%s%-*s' "${CLEAR_TO_EOL}" "$COL_WIDTH" "--> Running: ${label}${dots}"
         sleep 0.5
     done
 
     task_status=0
     wait "$task_pid" || task_status=$?
 
-    printf '\r%-62s' "--> Running: ${label}..."
+    printf '\r%s%-*s' "${CLEAR_TO_EOL}" "$COL_WIDTH" "--> Running: ${label}..."
 }
 
 prepare_sshd() {
@@ -86,7 +89,7 @@ for tasks in "${STARTUP_SEQUENCE[@]}"; do
     fi
 
     # Output entrypoint step to console
-    printf '%-62s' "--> Running: $label"
+    printf '%-*s' "$COL_WIDTH" "--> Running: $label"
     "$task" >"$log_file" 2>&1 &
     task_pid=$!
     print_dots
