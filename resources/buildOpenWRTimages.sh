@@ -70,9 +70,15 @@ smartmontools lm-sensors rng-tools kmod-tls"
 # List of EFI Firmware modules to be included in partition 1
 # (EFI System Partition)
 BOOT_EFI_MODS=(
-    part_gpt part_msdos mdraid1x mdraid09 ext2 part_apple 
-    part_bsd fat search search_label search_fs_uuid search_fs_file 
-    configfile ntfs usb btrfs exfat linux
+    part_apple part_bsd part_gpt part_msdos help time
+    mdraid09 mdraid1x linux btrfs exfat ext2 fat ntfs
+    configfile minicmd normal sleep test tr date echo
+    ls search search_fs_file search_fs_uuid search_label
+    all_video efi_gop efi_uga gfxterm lspci lsefi fshelp
+    font date datetime datehook cat boot chain cpuid
+    setpci read serial terminfo terminal hello progress
+    usb usb_keyboard usbserial_common usbserial_ftdi
+    usbserial_pl2303 usbserial_usbdebug usbtest
 )
 
 if [[ "$CLEAN" -eq 1 ]]; then

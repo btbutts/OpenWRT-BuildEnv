@@ -4,6 +4,7 @@ set -e
 STAGING_DIR="/builder/workspace/output/usb_installer_stage"
 BUILDROOT_ASSETS="/builder/workspace/output/buildroot"
 OPENWRT_ASSETS="/builder/workspace/output"
+SCRIPTS_POOL="/builder/buildrootConf"
 
 echo "--> Initializing custom USB installer staging tree..."
 rm -rf "$STAGING_DIR"
@@ -41,45 +42,27 @@ fi
 
 # Step 3: Generate the custom embedded GRUB.cfg steering loop
 # This tells the primary binary to look for the real configuration on the drive
-echo "--> Creating structural boot configs..."
-cat << 'EOF' > "${STAGING_DIR}/EFI/BOOT/grub.cfg"
-set default=0
-set timeout=5
-
-translation_filter_mode=1
-insmod part_gpt
-insmod part_msdos
-insmod fat
-insmod ext2
-insmod serial
-insmod video
-insmod font
-
-set installer_cmdline="console=tty0 loglevel=7"
-
-menuentry "Execute Bare-Metal OpenWRT Deployment Engine" --class linux {
-    echo "Loading customized system installer kernel..."
-    search --no-floppy --file --set=root /boot/vmlinuz-installer
-    linux /boot/vmlinuz-installer ${installer_cmdline}
-    echo "Loading ramdisk..."
-    initrd /boot/initramfs-installer.img
-}
-
-menuentry "Emergency Hardware Maintenance Shell" --class shell {
-    echo "Loading kernel in diagnostic maintenance framework mode..."
-    search --no-floppy --file --set=root /boot/vmlinuz-installer
-    linux /boot/vmlinuz-installer ${installer_cmdline} single
-    echo "Loading ramdisk..."
-    initrd /boot/initramfs-installer.img
-}
-EOF
+echo "--> Copying structural boot configs..."
+cp "${SCRIPTS_POOL}/grub/buildroot.grub.cfg" "${STAGING_DIR}/EFI/BOOT/grub.cfg"
 
 # Step 4: Compile the raw universal EFI binary stub
 echo "--> Compiling standalone generic x86_64 EFI bootloader payload..."
-grub-mkimage -O x86_64-efi \
+grub_mods=(
+    part_gpt part_msdos exfat ext2 fat linux help time
+    configfile minicmd normal sleep test tr date echo
+    ls search search_fs_file search_fs_uuid search_label
+    all_video efi_gop efi_uga gfxterm lspci lsefi fshelp
+    font date datetime datehook cat boot chain cpuid
+    setpci read serial terminfo terminal hello progress
+    usb usb_keyboard usbserial_common usbserial_ftdi
+    usbserial_pl2303 usbserial_usbdebug usbtest
+)
+grub-mkimage \
+    -d /usr/lib/grub/x86_64-efi \
+    -O x86_64-efi \
     -o "${STAGING_DIR}/EFI/BOOT/BOOTX64.EFI" \
     -p "/EFI/BOOT" \
-    part_gpt part_msdos fat ext2 exfat normal test configfile linux search normal ls echo
+    "${grub_mods[@]}"
 
 echo "========================================================="
 echo "STAGING SUCCESSFUL!"

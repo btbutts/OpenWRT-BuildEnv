@@ -89,7 +89,7 @@ for tasks in "${STARTUP_SEQUENCE[@]}"; do
     fi
 
     # Output entrypoint step to console
-    printf '%-*s' "$COL_WIDTH" "--> Running: $label"
+    printf '%-*s\r' "$COL_WIDTH" "--> Running: $label"
     "$task" >"$log_file" 2>&1 &
     task_pid=$!
     print_dots
