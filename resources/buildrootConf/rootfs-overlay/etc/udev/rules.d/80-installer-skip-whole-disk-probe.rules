@@ -1,0 +1,6 @@
+# Skip udev watch/probe on whole-disk nodes. RAID members and GPT disks
+# have no filesystem at the disk device; blkid there floods kmsg with
+# EXT4/FAT/exFAT/NTFS/F2FS errors. Partition nodes (DEVTYPE=part) are
+# still processed normally. This file is installer-specific and does not
+# replace eudev's 60-persistent-storage.rules.
+SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", OPTIONS+="nowatch"

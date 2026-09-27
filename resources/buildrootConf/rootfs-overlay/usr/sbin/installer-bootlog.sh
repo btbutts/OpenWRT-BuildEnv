@@ -58,7 +58,12 @@ find_installer_part() {
     done < /proc/mounts
 
     mkdir -p "$MNT"
-    for part in $(lsblk -lno NAME | grep -E 'sd|nvme|vd|hd'); do
+    while read -r part devtype _; do
+        [ "$devtype" = "part" ] || continue
+        case "$part" in
+            sd*|nvme*|vd*|hd*) ;;
+            *) continue ;;
+        esac
         [[ "$part" == loop* || "$part" == dm-* ]] && continue
 
         # A second mount of a device wizard already has open breaks setup.sh
@@ -73,7 +78,7 @@ find_installer_part() {
             return 0
         fi
         umount "$MNT" 2>/dev/null || true
-    done
+    done < <(lsblk -lno NAME,TYPE)
     return 1
 }
 

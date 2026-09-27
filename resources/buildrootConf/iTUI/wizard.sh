@@ -6,20 +6,23 @@ echo "installer shell=$0 bash=${BASH_VERSION:-NOT_BASH} exe=$(readlink -f /proc/
 # --- Tier 1: Identify the Installer USB / Deployment Source Media ---
 INSTALLER_DISK=""
 
-# Scan every available block device partition on the system to locate the payload archives
-for PART in $(lsblk -lno NAME | grep -E 'sd|nvme|vd|hd'); do
-    # Skip loop devices and device-mapper components
+# Scan partitions only. Mounting a whole disk (TYPE=disk) makes the kernel
+# probe every FS type against GPT/mdadm members and floods the console.
+# The installer USB is an EFI FAT partition; PKNAME of that partition is
+# the parent disk we exclude from the RAID target list.
+while read -r PART DEVTYPE _; do
+    [ "$DEVTYPE" = "part" ] || continue
+    case "$PART" in
+        sd*|nvme*|vd*|hd*) ;;
+        *) continue ;;
+    esac
     [[ "$PART" == loop* || "$PART" == dm-* ]] && continue
-    
-    # Try mounting the partition read-only to inspect its contents
+
     TMP_MNT="/tmp/check_${PART}"
     mkdir -p "$TMP_MNT"
     if mount -o ro "/dev/$PART" "$TMP_MNT" 2>/dev/null; then
-        # Check if this partition houses your deployment assets
         if [ -f "${TMP_MNT}/openwrt-custom-x86-64-rootfs.tar.gz" ] || [ -f "${TMP_MNT}/openwrt-custom-x86-64-boot.tar.gz" ]; then
-            # Find the parent disk name (e.g., converts 'nvme0n1p1' to 'nvme0n1', 'sda1' to 'sda')
             INSTALLER_DISK=$(lsblk -no PKNAME "/dev/$PART" 2>/dev/null | head -n1)
-            # Fallback if PKNAME is empty (some environments don't populate it for raw devices)
             [ -z "$INSTALLER_DISK" ] && INSTALLER_DISK=$(echo "$PART" | sed -E 's/p?[0-9]+$//')
             umount "$TMP_MNT"
             rmdir "$TMP_MNT"
@@ -28,7 +31,7 @@ for PART in $(lsblk -lno NAME | grep -E 'sd|nvme|vd|hd'); do
         umount "$TMP_MNT"
     fi
     rmdir "$TMP_MNT" 2>/dev/null || true
-done
+done < <(lsblk -lno NAME,TYPE)
 
 # If content validation failed, fall back to checking if the OS is currently running an active LVM layout (VM context)
 if [ -z "$INSTALLER_DISK" ]; then

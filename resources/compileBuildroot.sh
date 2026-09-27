@@ -129,9 +129,11 @@ cat << 'EOF' > "${OVERLAY_DIR}/etc/init.d/S99installer"
 #!/bin/bash
 case "$1" in
     start)
-        dmesg -n 3 2>/dev/null || true
+        # Keep the kmsg ring buffer; stop printk from painting over dialog/tty1.
+        # loglevel= on the kernel cmdline still applies during boot.
+        dmesg -n 1 2>/dev/null || true
         if [ -w /proc/sys/kernel/printk ]; then
-            echo "4 4 1 7" > /proc/sys/kernel/printk
+            echo "1 4 1 7" > /proc/sys/kernel/printk
         fi
         # Force script attachment to the primary system video output console terminal
         /usr/bin/wizard.sh < /dev/tty1 > /dev/tty1 2>&1

@@ -114,10 +114,17 @@ mount /dev/md1 /target/root
 mkdir -p /target/root/boot/efi
 mount /dev/md0 /target/root/boot/efi
 
-# Mount the USB holding your production tarballs
+# Mount the USB holding your production tarballs.
+# Only TYPE=part: the staging tree lives on the EFI FAT partition, and
+# mounting whole disks (nvme0n1, sda) only triggers false FS probes.
 mkdir -p /src
 USB_SOURCE=""
-for PART in $(lsblk -lno NAME | grep -E 'sd|nvme'); do
+while read -r PART DEVTYPE _; do
+    [ "$DEVTYPE" = "part" ] || continue
+    case "$PART" in
+        sd*|nvme*) ;;
+        *) continue ;;
+    esac
     if mount -o ro "/dev/$PART" /src 2>/dev/null; then
         if [ -f /src/openwrt-rootfs.tar.gz ] && [ -f /src/openwrt-boot.tar.gz ]; then
             USB_SOURCE="/dev/$PART"
@@ -126,7 +133,7 @@ for PART in $(lsblk -lno NAME | grep -E 'sd|nvme'); do
         fi
         umount /src
     fi
-done
+done < <(lsblk -lno NAME,TYPE)
 if [ -z "$USB_SOURCE" ]; then
     echo "ERROR: Could not locate distribution deployment USB with required tarballs."
     exit 1
