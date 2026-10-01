@@ -15,6 +15,10 @@ config BR2_PACKAGE_GCC_STANDALONE_TOOLCHAIN
 	  Requires an internal Buildroot toolchain
 	  (BR2_TOOLCHAIN_BUILDROOT).
 
+	  The package makefile appends opt/gcc-standalone-toolchain to
+	  BR2_STRIP_EXCLUDE_DIRS so target-finalize does not strip the
+	  prebuilt SDK. Kconfig cannot select a string option.
+
 if BR2_PACKAGE_GCC_STANDALONE_TOOLCHAIN
 
 config BR2_PACKAGE_GCC_STANDALONE_TOOLCHAIN_VERSION

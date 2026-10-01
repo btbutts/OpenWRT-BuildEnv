@@ -29,7 +29,7 @@ RUN sed -i '/^Components:/ s/$/ non-free/' \
     libbsd-dev libelf-dev libncurses-dev zlib1g-dev \
     ncurses-dev python3-flake8 bzip2 ca-certificates \
     liblzma-dev mtd-utils meson mold ninja-build \
-    pigz pkg-config python3-dev subversion swig \
+    pigz pkg-config python3-dev subversion swig dialog \
     gettext libssl-dev xsltproc wget unzip python3 \
     grub-common dosfstools time rsync gawk file \
     python3-setuptools curl net-tools bind9-dnsutils \

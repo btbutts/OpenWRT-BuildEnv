@@ -121,6 +121,19 @@ if [ -n "${BR_APP}" ]; then
         cd "${BUILDROOT_BUILDER_DIR%/}"
         printf '%s%s\n' "Running dirclean and build for package: " "${BR_APP}"
         make "${BR_APP}-dirclean"
+        run_copy_kconfig
+        if [ "${BR_APP}" == "busybox" ]; then
+            # Prompt the user and wait for a single keystroke
+            msg_text=$(printf '%s\n\n\t%s\n\t%s\n' \
+                "In order for the --rebuild-app operation for '${BR_APP}' to succeed:" \
+                "1. You must exit the menuconfig TUI using the 'Exit' button." \
+                "2. Choose 'YES' when prompted to save the new configuration.")
+            dialog --title "BusyBox Configuration Required" --msgbox "$msg_text" 10 70
+            printf '%s\n' "Refreshing and syncing configuration for busybox..."
+            make "${BR_APP}-menuconfig"
+            printf '%s\n' "Syncing configuration updates back to your source file..."
+            make "${BR_APP}-update-config"
+        fi
         make "${BR_APP}"
         exit 0
     else
