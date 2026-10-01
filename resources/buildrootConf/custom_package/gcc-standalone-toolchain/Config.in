@@ -1,0 +1,33 @@
+config BR2_PACKAGE_GCC_STANDALONE_TOOLCHAIN
+	bool "gcc-standalone-toolchain"
+	depends on BR2_TOOLCHAIN_BUILDROOT
+	depends on BR2_TOOLCHAIN_BUILDROOT_GLIBC || BR2_TOOLCHAIN_BUILDROOT_MUSL || BR2_TOOLCHAIN_BUILDROOT_UCLIBC
+	depends on BR2_x86_x86_64 || BR2_x86_x86_64_v2 || BR2_x86_x86_64_v3 || BR2_x86_x86_64_v4 || BR2_aarch64 || BR2_aarch64_be
+	help
+	  Install a Bootlin prebuilt gcc toolchain into the target
+	  rootfs so gcc/g++ are usable on the running image.
+
+	  The tarball is selected from toolchains.bootlin.com using
+	  this configuration's CPU variant (x86-64 / x86-64-v2 / v3 /
+	  v4, aarch64, aarch64be) and C library (glibc, musl, or
+	  uclibc). See https://toolchains.bootlin.com/toolchains.html
+
+	  Requires an internal Buildroot toolchain
+	  (BR2_TOOLCHAIN_BUILDROOT).
+
+if BR2_PACKAGE_GCC_STANDALONE_TOOLCHAIN
+
+config BR2_PACKAGE_GCC_STANDALONE_TOOLCHAIN_VERSION
+	string "Bootlin toolchain release"
+	default "2026.08-1"
+	help
+	  Version suffix from toolchains.bootlin.com, for example
+	  2026.08-1. Combined with the selected architecture and C
+	  library to form:
+
+	    {arch}--{libc}--stable-{version}.tar.xz
+
+	  Available releases are listed per architecture at
+	  https://toolchains.bootlin.com/toolchains.html
+
+endif

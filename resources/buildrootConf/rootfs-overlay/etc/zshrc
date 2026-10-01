@@ -1,0 +1,2 @@
+# /etc/zshrc: interactive zsh.
+alias vi=vim

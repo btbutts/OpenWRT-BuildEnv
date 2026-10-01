@@ -1,7 +1,8 @@
-" Vim5 and later versions support syntax highlighting. Uncommenting the next
-" line enables syntax highlighting by default.
+" System vimrc for the installer image ($VIM/vimrc).
+set nocompatible
+set background=dark
+if &t_Co < 8
+  set t_Co=8
+endif
 syntax on
-
-" Uncomment the following to have Vim load indentation rules and plugins
-" according to the detected filetype.
 filetype plugin indent on

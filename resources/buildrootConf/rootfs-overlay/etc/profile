@@ -1,0 +1,58 @@
+# /etc/profile: System-wide initialization for login shells (bash and zsh).
+
+# GNU tools in /usr/bin (vim, less) ahead of BusyBox applets in /bin.
+export PATH=/usr/bin:/usr/sbin:/bin:/sbin
+
+# Prompt: bash uses \[ \]; zsh uses %F / %f.
+if [ -n "${ZSH_VERSION:-}" ]; then
+    if [ "${USER:-}" = "root" ] || [ "$(id -u 2>/dev/null)" = "0" ]; then
+        PS1='%F{red}[%n@%m %1~]%f# '
+    else
+        PS1='[%n@%m %1~]$ '
+    fi
+elif [ "${USER:-}" = "root" ]; then
+    PS1='\[\e[1;31m\][\u@\h \W]#\[\e[0m\] '
+else
+    PS1='[\u@\h \W]$ '
+fi
+export PS1
+
+export HOME="${HOME:-/root}"
+export EDITOR='/usr/bin/vim'
+export VISUAL="$EDITOR"
+umask 022
+
+# Linux VT when getty/kernel did not set TERM (needed for less -R and vim color).
+if [ -z "${TERM:-}" ] || [ "$TERM" = "dumb" ]; then
+    export TERM=linux
+fi
+
+# grotty SGR (ESC[1m / ESC[22m / ESC[24m) shows as text unless the pager
+# is told to pass it through. Disable SGR so nroff uses overstrike, which
+# less understands natively; LESS_TERMCAP_* then colorizes that overstrike.
+export GROFF_NO_SGR=1
+export LESS='-R'
+export PAGER='/usr/bin/less'
+export MANPAGER='/usr/bin/less -R'
+
+export LESS_TERMCAP_mb=$'\033[1;31m'
+export LESS_TERMCAP_md=$'\033[1;36m'
+export LESS_TERMCAP_me=$'\033[0m'
+export LESS_TERMCAP_se=$'\033[0m'
+export LESS_TERMCAP_so=$'\033[1;44;33m'
+export LESS_TERMCAP_ue=$'\033[0m'
+export LESS_TERMCAP_us=$'\033[1;32m'
+
+if [ -n "${ZSH_VERSION:-}" ]; then
+    alias vi=vim
+elif [ -n "${BASH_VERSION:-}" ]; then
+    alias vi=vim
+fi
+
+# shellcheck source=/etc/profile.d/*.sh: disable=SC1091
+for i in /etc/profile.d/*.sh; do
+    if [ -r "$i" ]; then
+        . "$i"
+    fi
+done
+unset i

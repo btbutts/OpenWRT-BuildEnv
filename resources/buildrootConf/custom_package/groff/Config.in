@@ -1,0 +1,19 @@
+config BR2_PACKAGE_GROFF
+	bool "groff"
+	depends on BR2_INSTALL_LIBSTDCPP
+	help
+	  Groff (GNU troff) is a typesetting system that reads plain text mixed
+	  with formatting commands and produces formatted output. Output may be
+	  PostScript or PDF, html, or ASCII/UTF8 for display at the terminal.
+	  Formatting commands may be either low-level typesetting requests
+	  ("primitives") or macros from a supplied set. Users may also write
+	  their own macros. All three may be combined.
+
+	  http://www.gnu.org/software/groff/
+
+config BR2_PACKAGE_GROFF_VERSION
+	string "groff version"
+	default "1.24.1"
+	help
+	  The version of groff to use. This is the version that will be
+	  downloaded and built.

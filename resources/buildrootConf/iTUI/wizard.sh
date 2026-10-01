@@ -3,65 +3,25 @@ set -e
 
 echo "installer shell=$0 bash=${BASH_VERSION:-NOT_BASH} exe=$(readlink -f /proc/self/exe)" > /dev/tty1
 
-# --- Tier 1: Identify the Installer USB / Deployment Source Media ---
-INSTALLER_DISK=""
-
-# Scan partitions only. Mounting a whole disk (TYPE=disk) makes the kernel
-# probe every FS type against GPT/mdadm members and floods the console.
-# The installer USB is an EFI FAT partition; PKNAME of that partition is
-# the parent disk we exclude from the RAID target list.
-while read -r PART DEVTYPE _; do
-    [ "$DEVTYPE" = "part" ] || continue
-    case "$PART" in
-        sd*|nvme*|vd*|hd*) ;;
-        *) continue ;;
-    esac
-    [[ "$PART" == loop* || "$PART" == dm-* ]] && continue
-
-    TMP_MNT="/tmp/check_${PART}"
-    mkdir -p "$TMP_MNT"
-    if mount -o ro "/dev/$PART" "$TMP_MNT" 2>/dev/null; then
-        if [ -f "${TMP_MNT}/openwrt-custom-x86-64-rootfs.tar.gz" ] || [ -f "${TMP_MNT}/openwrt-custom-x86-64-boot.tar.gz" ]; then
-            INSTALLER_DISK=$(lsblk -no PKNAME "/dev/$PART" 2>/dev/null | head -n1)
-            [ -z "$INSTALLER_DISK" ] && INSTALLER_DISK=$(echo "$PART" | sed -E 's/p?[0-9]+$//')
-            umount "$TMP_MNT"
-            rmdir "$TMP_MNT"
-            break
-        fi
-        umount "$TMP_MNT"
-    fi
-    rmdir "$TMP_MNT" 2>/dev/null || true
-done < <(lsblk -lno NAME,TYPE)
-
-# If content validation failed, fall back to checking if the OS is currently running an active LVM layout (VM context)
-if [ -z "$INSTALLER_DISK" ]; then
-    ROOT_DEV=$(findmnt -n -o SOURCE /)
-    if [[ "$ROOT_DEV" == *mapper* || "$ROOT_DEV" == *dm-* ]]; then
-        # Use dmsetup to resolve LVM arrays down to their underlying physical device components
-        DM_NAME=$(basename "$ROOT_DEV")
-        SLAVE_DEV=$(find "/sys/block/${DM_NAME}/slaves/" -maxdepth 1 -type l -printf "%f\n" 2>/dev/null | head -n1)
-        if [ ! -z "$SLAVE_DEV" ]; then
-            INSTALLER_DISK=$(lsblk -no PKNAME "/dev/$SLAVE_DEV" 2>/dev/null | head -n1)
-            [ -z "$INSTALLER_DISK" ] && INSTALLER_DISK=$(echo "$SLAVE_DEV" | sed -E 's/p?[0-9]+$//')
-        fi
-    fi
+if [ ! -f /usr/lib/installer/media.sh ]; then
+    dialog --msgbox "Error: installer media helper is missing (/usr/lib/installer/media.sh)." 8 60
+    exit 1
 fi
+# shellcheck source=/usr/lib/installer/media.sh: disable=SC1091
+. /usr/lib/installer/media.sh
 
-# Final absolute fallback if no source environment drive could be determined
-[ -z "$INSTALLER_DISK" ] && INSTALLER_DISK="NOT_FOUND_FALLBACK"
+# --- Tier 1: Identify the installer boot disk (USB/SD/NVMe) ---
+# installer-bootlog.service already discovered this and wrote /run/installer-media-id.
+# Do not mount target NVMe/SATA partitions here.
+installer_load_identity || installer_discover || true
 
-# --- Tier 2: Extract Target Disks for Selection ---
-# Gathers SCSI/SATA drives (sd*), NVMe drives (nvme*n*), and Virtual/VirtIO drives (vd*) common in VMs
-RAW_DRIVES=$(lsblk -dno NAME,SIZE,TYPE | grep -E 'disk' | grep -vE 'loop|ram')
-
+# --- Tier 2: Real, non-zero disks only; never nbd/loop/0B; never boot media ---
 DIALOG_ARGS=()
-while read -r NAME SIZE _; do
-    # Strictly exclude the installer source disk from being displayed as an option
-    [ "$NAME" = "$INSTALLER_DISK" ] && continue
-    
-    # Format choice list for the dialog box menu array
+while read -r NAME SIZE TYPE; do
+    [ "$TYPE" = "disk" ] || continue
+    installer_is_target_disk "$NAME" || continue
     DIALOG_ARGS+=("$NAME" "Disk_Size:_${SIZE}" "off")
-done <<< "$RAW_DRIVES"
+done < <(lsblk -dno NAME,SIZE,TYPE)
 
 if [ ${#DIALOG_ARGS[@]} -eq 0 ]; then
     dialog --msgbox "Error: No target disks available for installation.\nAll detected drives are currently in use by the active OS or installer environment." 8 60
@@ -72,15 +32,25 @@ fi
 # Fix: Pass individual arguments cleanly without wrapping the array in double quotes!
 SELECTED_RAW=$(dialog --stdout --checklist "Select 2 to 4 target disks for OpenWRT RAID:" 15 60 5 "${DIALOG_ARGS[@]}")
 
-# Convert selection into an array
-# shellcheck disable=SC2206
-DISK_ARRAY=($SELECTED_RAW)
+read -r -a DISK_ARRAY <<< "$SELECTED_RAW"
 DISK_COUNT=${#DISK_ARRAY[@]}
 
 if [ "$DISK_COUNT" -lt 2 ] || [ "$DISK_COUNT" -gt 4 ]; then
     dialog --msgbox "Error: You must select between 2 and 4 disks to construct the RAID matrix." 6 60
-    return 1
+    exit 1
 fi
+
+# Refuse the installer boot disk even if it leaked into the checklist.
+for _disk in "${DISK_ARRAY[@]}"; do
+    if [ -n "$INSTALLER_DISK" ] && [ "$_disk" = "$INSTALLER_DISK" ]; then
+        dialog --msgbox "Error: ${_disk} is the installer boot media and cannot be a RAID target." 8 60
+        exit 1
+    fi
+    if ! installer_is_target_disk "$_disk"; then
+        dialog --msgbox "Error: ${_disk} is not a writable installation target." 8 60
+        exit 1
+    fi
+done
 
 
 # Step 2: Determine RAID Level & Sizing
@@ -158,6 +128,19 @@ if ! dialog --yesno "WARNING: This will completely erase all data on: ${DISK_ARR
     echo "--> Deployment canceled by user."
     exit 1
 fi
+
+# Record wizard selections before setup.sh takes over the console.
+mkdir -p /var/log
+{
+    echo "===== wizard.sh selections ====="
+    date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date
+    echo "INSTALLER_DISK=${INSTALLER_DISK:-unknown}"
+    echo "DISKS=${DISK_ARRAY[*]}"
+    echo "DISK_COUNT=$DISK_COUNT"
+    echo "RAID_LEVEL=$ROOT_RAID_LEVEL"
+    echo "ROOT_PART_END=${ROOT_PART_END:-MAX}"
+    echo "BITMAP=$ROOT_BITMAP_MODE"
+} > /var/log/installer-setup.log
 
 # Hand off to setup.sh with wizard arguments
 clear

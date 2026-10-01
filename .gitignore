@@ -4,3 +4,4 @@ buildEnvShare/
 buildArchive/
 OpenWRTImageBuilder/
 OpenWRTImagesOut/
+__pycache__/

@@ -1,19 +1,35 @@
 #!/bin/bash
 set -e
 
-BR_PATH="/builder/Buildroot-Builder"
-BR_WORKSPACE_OUT="/builder/workspace/output/buildroot"
-SCRIPTS_POOL="/builder/buildrootConf"
-#OVERLAY_DIR="${BR_PATH}/system/skeleton_overlay"
-OVERLAY_DIR="${BR_PATH}/../buildrootConf/rootfs-overlay"
+: "${BUILDER_ROOT_DIR:=/builder}"
+: "${BUILDROOT_BUILDER_DIR:=/builder/Buildroot-Builder}"
+: "${BUILDROOT_OUTPUT_DIR:=/builder/workspace/output/buildroot}"
+: "${BUILDROOT_CONF_DIR:=/builder/buildrootConf}"
+: "${WORKSPACE_DIR:=/builder/workspace}"
+
+BUILDROOT_OVERLAY_DIR="${BUILDROOT_CONF_DIR%/}/rootfs-overlay"
+BUILDROOT_CCACHE_DIR="${BUILDROOT_BUILDER_DIR%/}/.buildroot-ccache"
+BUILDROOT_OUTPUT_DIR="${BUILDROOT_OUTPUT_DIR%/}"
+
 REBUILD_LINUX=0
-for arg in "$@"; do
-    case "$arg" in
-        --rebuild-linux-firmware) REBUILD_LINUX=1 ;;
-        --rebuild-linux-firmware-clean) REBUILD_LINUX=2 ;;
-        --compiler-cache-clean) DEL_CCACHE=1 ;;
-        --copy-only) COPY_ONLY=1 ;;
-        *) echo "Unknown argument: $arg" >&2; exit 2 ;;
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --rebuild-linux-firmware) REBUILD_LINUX=1; shift ;;
+        --rebuild-linux-firmware-clean) REBUILD_LINUX=2; shift ;;
+        --compiler-cache-clean) DEL_CCACHE=1; shift ;;
+        --rebuild-app)
+            if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
+                BR_APP="$2"
+                shift 2
+            else
+                echo "Error: --rebuild-app requires a package name argument." >&2
+                exit 1
+            fi
+            ;;
+        --rebuild-linux-toolchain) REBUILD_LX_TOOLCHAIN=1; shift ;;
+        --copy-only) COPY_ONLY=1; shift ;;
+        --target-finalize-clean) RM_TARGET_FINALIZE=1; shift ;;
+        *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
 done
 
@@ -78,34 +94,95 @@ copy_kconfig() {
 }
 
 run_copy_kconfig() {
-    copy_kconfig --remove-commented-params "${SCRIPTS_POOL}/setup.config" "${BR_PATH}/configs/installer_defconfig"
-    if [ -f "${SCRIPTS_POOL}/kernelOptions.config" ]; then
-        copy_kconfig --remove-commented-params "${SCRIPTS_POOL}/kernelOptions.config" "${BR_PATH}/kernelOptions.config"
+    copy_kconfig --remove-commented-params "${BUILDROOT_CONF_DIR%/}/setup.config" "${BUILDROOT_BUILDER_DIR%/}/configs/installer_defconfig"
+    if [ -f "${BUILDROOT_CONF_DIR%/}/kernelOptions.config" ]; then
+        copy_kconfig --remove-commented-params "${BUILDROOT_CONF_DIR%/}/kernelOptions.config" "${BUILDROOT_BUILDER_DIR%/}/kernelOptions.config"
+    fi
+    if [ -f "${BUILDROOT_CONF_DIR%/}/busyboxOptions.config" ]; then
+        copy_kconfig --remove-commented-params "${BUILDROOT_CONF_DIR%/}/busyboxOptions.config" "${BUILDROOT_BUILDER_DIR%/}/busyboxOptions.config"
     fi
 }
 
 if [[ "${COPY_ONLY}" -eq 1 ]]; then
      printf '%s%s\n%s\n\t%s\n\t%s\n' "--> compiler script was run with " "$@" \
         "Copying:" \
-        "${SCRIPTS_POOL}/setup.config --> ${BR_PATH}/configs/installer_defconfig" \
-        "${SCRIPTS_POOL}/kernelOptions.config --> ${BR_PATH}/kernelOptions.config"
+        "${BUILDROOT_CONF_DIR%/}/setup.config --> ${BUILDROOT_BUILDER_DIR%/}/configs/installer_defconfig" \
+        "${BUILDROOT_CONF_DIR%/}/kernelOptions.config --> ${BUILDROOT_BUILDER_DIR%/}/kernelOptions.config" \
+        "${BUILDROOT_CONF_DIR%/}/busyboxOptions.config --> ${BUILDROOT_BUILDER_DIR%/}/busyboxOptions.config" 
     run_copy_kconfig
     exit 0
 fi
 
+# When a dirclean command is requested for a
+# specific app, handle it here and then exit
+if [ -n "${BR_APP}" ]; then
+    BR_APP_PATH=$(find Buildroot-Builder/package/ -wholename "*/${BR_APP}" -type d 2>/dev/null)
+    if [ -n "${BR_APP_PATH}" ] && [ "${BR_APP_PATH#Buildroot-Builder/package/}" = "${BR_APP}" ]; then
+        cd "${BUILDROOT_BUILDER_DIR%/}"
+        printf '%s%s\n' "Running dirclean and build for package: " "${BR_APP}"
+        make "${BR_APP}-dirclean"
+        make "${BR_APP}"
+        exit 0
+    else
+        echo "Error: Package directory validation failed for '${BR_APP}'." >&2
+        exit 1
+    fi
+fi
+
 # 2. Establish layout overlay pipeline trees
-mkdir -p "${OVERLAY_DIR}/usr/bin" \
-    "${OVERLAY_DIR}/etc/init.d" \
-    "${OVERLAY_DIR}/usr/share/vim" \
-    "${OVERLAY_DIR}/etc/acpi/events"
+mkdir -p "${BUILDROOT_OVERLAY_DIR}/usr/bin" \
+    "${BUILDROOT_OVERLAY_DIR}/bin" \
+    "${BUILDROOT_OVERLAY_DIR}/usr/lib/installer" \
+    "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/multi-user.target.wants" \
+    "${BUILDROOT_OVERLAY_DIR}/usr/share/vim" \
+    "${BUILDROOT_OVERLAY_DIR}/etc/acpi/events"
+
+# systemd enablement: a unit is inactive until a wants/requires symlink
+# exists. Recreate these every compile so they survive overlay churn.
+ln -sfn ../installer-bootlog.service \
+    "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/multi-user.target.wants/installer-bootlog.service"
+ln -sfn ../installer-wizard.service \
+    "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/multi-user.target.wants/installer-wizard.service"
+printf '%s\n\t%s\n\t%s\n' "Ensured systemd multi-user.target.wants enablement links:" \
+    "installer-bootlog.service" \
+    "installer-wizard.service"
+
+# SysV rcS scripts are unused under BR2_INIT_SYSTEMD.
+rm -f "${BUILDROOT_OVERLAY_DIR}/etc/init.d/S99installer" \
+    "${BUILDROOT_OVERLAY_DIR}/etc/init.d/S20installer-bootlog"
+
+# GNU vim installs /usr/bin/vim only. Its post-install vi symlink is
+# /bin/vi (split /usr) and BusyBox CONFIG_VI used to overwrite that.
+# Recreate both names in the overlay so target-finalize always ships vi.
+ln -sfn vim "${BUILDROOT_OVERLAY_DIR}/usr/bin/vi"
+ln -sfn ../usr/bin/vim "${BUILDROOT_OVERLAY_DIR}/bin/vi"
+printf '%s\n\t%s\n\t%s\n' "Ensured vi -> vim overlay symlinks:" \
+    "${BUILDROOT_OVERLAY_DIR}/usr/bin/vi -> vim" \
+    "${BUILDROOT_OVERLAY_DIR}/bin/vi -> ../usr/bin/vim"
 
 # 3. Inject installer user-space assets
 declare -A SCRIPTS_MAP=(
-    ["${SCRIPTS_POOL}/iTUI/wizard.sh"]="${OVERLAY_DIR}/usr/bin/wizard.sh"
-    ["${SCRIPTS_POOL}/automation/setup.sh"]="${OVERLAY_DIR}/usr/bin/setup.sh"
-    ["${OVERLAY_DIR}/usr/sbin/installer-bootlog.sh"]=""
-    ["${SCRIPTS_POOL}/inittab/append.sh"]=""
+    ["${BUILDROOT_CONF_DIR%/}/iTUI/wizard.sh"]="${BUILDROOT_OVERLAY_DIR}/usr/bin/wizard.sh"
+    ["${BUILDROOT_CONF_DIR%/}/automation/setup.sh"]="${BUILDROOT_OVERLAY_DIR}/usr/bin/setup.sh"
+    ["${BUILDROOT_OVERLAY_DIR}/usr/sbin/installer-bootlog.sh"]=""
+    ["${BUILDROOT_OVERLAY_DIR}/usr/lib/installer/media.sh"]=""
+    ["${BUILDROOT_OVERLAY_DIR}/usr/lib/installer/bootlog-wrapper.sh"]=""
+    ["${BUILDROOT_CONF_DIR%/}/inittab/append.sh"]=""
 )
+
+# Sourced by login shells; the executable bit is unused, but keep them
+# readable. zsh does not read /etc/profile unless zprofile/zshenv do.
+for sourced in \
+    "${BUILDROOT_OVERLAY_DIR}/etc/profile" \
+    "${BUILDROOT_OVERLAY_DIR}/etc/zprofile" \
+    "${BUILDROOT_OVERLAY_DIR}/etc/zshenv" \
+    "${BUILDROOT_OVERLAY_DIR}/etc/zshrc"
+do
+    if [ -f "$sourced" ]; then
+        chmod 644 "$sourced"
+        printf '%s%s\n' "Set shell-init permissions: --> " "$sourced"
+    fi
+done
 
 # Loop through the keys (source paths)
 for file in "${!SCRIPTS_MAP[@]}"; do
@@ -116,7 +193,7 @@ for file in "${!SCRIPTS_MAP[@]}"; do
             cp "$file" "$dest"
             chmod +x "$dest"
             printf '%s\n\t%s%s%s\n' "Copied and set executable permission:" \
-                "$file" "-->" "$dest"
+                "$file" " --> " "$dest"
         else
             chmod +x "$file"
             printf '%s%s\n' "Set executable permission: --> " "$file"
@@ -124,80 +201,74 @@ for file in "${!SCRIPTS_MAP[@]}"; do
     fi
 done
 
-# 4. Write standard system daemon initialization script
-cat << 'EOF' > "${OVERLAY_DIR}/etc/init.d/S99installer"
-#!/bin/bash
-case "$1" in
-    start)
-        # Keep the kmsg ring buffer; stop printk from painting over dialog/tty1.
-        # loglevel= on the kernel cmdline still applies during boot.
-        dmesg -n 1 2>/dev/null || true
-        if [ -w /proc/sys/kernel/printk ]; then
-            echo "1 4 1 7" > /proc/sys/kernel/printk
-        fi
-        # Force script attachment to the primary system video output console terminal
-        /usr/bin/wizard.sh < /dev/tty1 > /dev/tty1 2>&1
-        ;;
-    stop)
-        ;;
-    *)
-        echo "Usage: $0 {start|stop}"
-        exit 1
-        ;;
-esac
-exit 0
-EOF
-
-cat << 'EOF' > "${OVERLAY_DIR}/etc/init.d/S20installer-bootlog"
-#!/bin/bash
-# etc/init.d/S20installer-bootlog
-case "${1:-start}" in
-    start) 
-        mkdir -p /var/log
-        /usr/sbin/installer-bootlog.sh > /var/log/installer-bootlog-wrapper.log 2>&1 & ;;
-    *) exit 0 ;;
-esac
-EOF
-
-cat << 'EOF' > "${OVERLAY_DIR}/etc/acpi/events/power"
+# 4. ACPI power-button handler (acpid); systemd units live in the overlay.
+cat << 'EOF' > "${BUILDROOT_OVERLAY_DIR}/etc/acpi/events/power"
 event=button/power
 action=/etc/acpi/power.sh
 EOF
 
-cat << 'EOF' > "${OVERLAY_DIR}/etc/acpi/power.sh"
+cat << 'EOF' > "${BUILDROOT_OVERLAY_DIR}/etc/acpi/power.sh"
 #!/bin/sh
 sync
 umount -a -r 2>/dev/null || true
 exec /sbin/poweroff -f
 EOF
-chmod +x "${OVERLAY_DIR}/etc/acpi/power.sh" \
-    "${OVERLAY_DIR}/etc/acpi/events/power" \
-    "${OVERLAY_DIR}/etc/init.d/S99installer" \
-    "${OVERLAY_DIR}/etc/init.d/S20installer-bootlog"
+chmod +x "${BUILDROOT_OVERLAY_DIR}/etc/acpi/power.sh" \
+    "${BUILDROOT_OVERLAY_DIR}/etc/acpi/events/power"
+chmod 644 \
+    "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/installer-bootlog.service" \
+    "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/installer-wizard.service"
 
 # 5. Load and evaluate target configurations
-cd "$BR_PATH"
+cd "${BUILDROOT_BUILDER_DIR%/}"
 
+# Executes when --compiler-cache-clean is passed
 if [[ "${DEL_CCACHE}" -eq 1 ]]; then
-    printf '%s\n' "'--compiler-cache-clean' called: Cleaning up Buildroot compiler cache..."
-    rm -rf "${BR_PATH}/.buildroot-ccache/.*" \
-        "${BR_PATH}/.buildroot-ccache/*"
+    printf '%s\n' "--> '--compiler-cache-clean' called: Cleaning up Buildroot compiler cache..."
+    rm -rf "${BUILDROOT_CCACHE_DIR:?}"/.* \
+        "${BUILDROOT_CCACHE_DIR:?}"/*
 fi
 
-mkdir -p "${BR_PATH}/.buildroot-ccache"
-if [ -f "${SCRIPTS_POOL}/setup.config" ]; then
+# Copy latest configuration to buildroot source directory
+mkdir -p "${BUILDROOT_CCACHE_DIR:?}"
+if [ -f "${BUILDROOT_CONF_DIR%/}/setup.config" ]; then
     run_copy_kconfig
     make installer_defconfig > /dev/null 2>&1
     make olddefconfig > /dev/null 2>&1
-    printf '%s%s\n' "--> Configuration from ${SCRIPTS_POOL}/setup.config " \
-        "applied to ${BR_PATH}/.config"
+    printf '%s%s\n' "--> Configuration from ${BUILDROOT_CONF_DIR%/}/setup.config " \
+        "applied to ${BUILDROOT_BUILDER_DIR%/}/.config"
 else
     printf '%s\n' "--> setup.config not detected. Standardizing on basic x86_64 topology..."
     make qemu_x86_64_defconfig
 fi
 
+# Executes when --rebuild-linux-toolchain is passed
+if [[ "${REBUILD_LX_TOOLCHAIN}" -eq 1 ]]; then
+    printf '%s\n\t%s\n' "Rebuilding the Linux cross-toolchain from scratch:" \
+        "--> Cleaning up previous build artifacts..."
+    sleep 0.25s
+    make toolchain-dirclean host-gdb-dirclean glibc-dirclean
+    printf '\t%s\n' "--> Cleaning up target and rootfs output directories..."
+    printf '\t%s\n' "--> Cleaning old linux kernel and firmware..."
+    REBUILD_LINUX=2
+    RM_TARGET_FINALIZE=1
+fi
+
+# Executes when --rm-target-finalize or --rebuild-linux-toolchain are passed
+if [[ "${RM_TARGET_FINALIZE}" -eq 1 ]]; then
+    printf '\t%s\n' "--> Cleaning up target-finalize artifacts..."
+    sleep 0.25s
+    rm -rf "${BUILDROOT_BUILDER_DIR%/}/output/target" \
+        "${BUILDROOT_BUILDER_DIR%/}/output/staging" \
+        "${BUILDROOT_BUILDER_DIR%/}/output/images"
+fi
+
+# Executes when --rebuild-linux-firmware-clean
+# or --rebuild-linux-toolchain are passed
 if [[ "${REBUILD_LINUX}" -eq 2 ]]; then
-    printf '%s\n' "Rebuilding Linux kernel from scratch: Cleaning up previous Linux kernel build artifacts..."
+    printf '%s\n\t%s\n' "Rebuilding Linux kernel from scratch:" \
+        "--> Cleaning up previous Linux kernel build artifacts..."
+    sleep 0.25s
     make linux-dirclean
     make linux-firmware-dirclean
     rm -rf output/target/lib/firmware \
@@ -207,8 +278,12 @@ if [[ "${REBUILD_LINUX}" -eq 2 ]]; then
         output/images/bzImage output/images/rootfs.tar
 fi
 
+# Executes when --rebuild-linux-firmware,
+# --rebuild-linux-firmware-clean, or
+# --rebuild-toolchain are passed
 if [[ "${REBUILD_LINUX}" =~ ^(1|2)$ ]]; then
-    printf '%s\n' "Reconfiguring and rebuilding the Linux kernel..."
+    printf '\t%s\n' "--> Reconfiguring and rebuilding the Linux kernel..."
+    sleep 0.25s
     make linux-reconfigure
     grep -E 'CONFIG_EXPERT|CONFIG_DRM_AMDGPU|CONFIG_SND_HDA_INTEL|CONFIG_USB_HID|CONFIG_SCSI=' \
         output/build/linux-*/.config || true
@@ -220,11 +295,11 @@ echo "--> Compiling specialized cross-toolchain and kernel utilities..."
 make -j"$(nproc)"
 
 # 7. Map final deployment components directly to your shared Host volume
-cd "$BR_PATH"
+cd "${BUILDROOT_BUILDER_DIR%/}"
 echo "--> Exporting final installer assets out to Host mount..."
-cp "${BR_PATH}"/output/images/bzImage \
-    "${BR_WORKSPACE_OUT}"/vmlinuz-installer
-cp "${BR_PATH}"/output/images/rootfs.cpio.* \
-    "${BR_WORKSPACE_OUT}"/initramfs-installer.img
+cp "${BUILDROOT_BUILDER_DIR%/}"/output/images/bzImage \
+    "${BUILDROOT_OUTPUT_DIR%/}"/vmlinuz-installer
+cp "${BUILDROOT_BUILDER_DIR%/}"/output/images/rootfs.cpio.* \
+    "${BUILDROOT_OUTPUT_DIR%/}"/initramfs-installer.img
 
 exit 0

@@ -37,8 +37,8 @@ RUN sed -i '/^Components:/ s/$/ non-free/' \
     u-boot-tools gzip xxd make libc6-dev pbzip2 \
     gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
     g++-aarch64-linux-gnu device-tree-compiler htop \
-    openssh-server sudo zsh lsb-release gnupg \
-    ${GRUB_PKGS} mtools dosfstools cpio gperf \
+    openssh-server sudo zsh lsb-release gnupg m4 \
+    ${GRUB_PKGS} mtools dosfstools cpio gperf groff \
     && apt-get clean && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/run/sshd
 
@@ -99,6 +99,7 @@ COPY --chown=builder:builder \
     resources/buildOpenWRTimages.sh \
     resources/getBuildroot.sh \
     resources/compileBuildroot.sh \
+    resources/customizeBuildroot.py \
     resources/buildInstallerUSB.sh \
     /builder/
 COPY --chown=builder:builder \
@@ -112,6 +113,7 @@ RUN chmod +x \
     /builder/compileBuildroot.sh \
     /builder/buildOpenWRTimages.sh \
     /builder/getBuildroot.sh \
+    /builder/customizeBuildroot.py \
     /builder/buildInstallerUSB.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]

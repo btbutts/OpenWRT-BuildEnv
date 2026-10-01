@@ -5,6 +5,10 @@ set -e
 set +m 2>/dev/null || true
 unsetopt MONITOR NOTIFY 2>/dev/null || true
 
+: "${BUILDER_ROOT_DIR:=/builder}"
+: "${OPENWRT_BUILDER_DIR:=/builder/OpenWRT-ImageBuilder}"
+: "${WORKSPACE_DIR:=/builder/workspace}"
+
 BOLD=$'\033[1m'
 RESET=$'\033[0m'
 CLEAR_TO_EOL=$'\033[K'
@@ -43,10 +47,9 @@ start_sshd() {
 }
 
 build_openwrt_fs() {
-    local image_dir vanilla_rootfs vanilla_kernel
-    image_dir="/builder/OpenWRT-ImageBuilder"
-    vanilla_rootfs=$(find ${image_dir}/bin/targets/x86/64/ -name "openwrt-*-rootfs.tar.gz" | head -n 1)
-    vanilla_kernel=$(find ${image_dir}/bin/targets/x86/64/ -name "openwrt-*-kernel.bin" | head -n 1)
+    local vanilla_rootfs vanilla_kernel
+    vanilla_rootfs=$(find "${OPENWRT_BUILDER_DIR%/}/bin/targets/x86/64/" -name "openwrt-*-rootfs.tar.gz" | head -n 1)
+    vanilla_kernel=$(find "${OPENWRT_BUILDER_DIR%/}/bin/targets/x86/64/" -name "openwrt-*-kernel.bin" | head -n 1)
 
     if [ -f "$vanilla_kernel" ] && [ -f "$vanilla_rootfs" ]; then
         printf '%s\n%s\n%s\n' \
@@ -65,8 +68,8 @@ build_openwrt_fs() {
 
 #    "/builder/compileBuildroot.sh|Compile Installer Media Platform"
 STARTUP_SEQUENCE=(
-    "/builder/extractImageBuilder.sh|Setup OpenWRT Image Builder"
-    "/builder/getBuildroot.sh|Setup Buildroot Environment"
+    "${BUILDER_ROOT_DIR%/}/extractImageBuilder.sh|Setup OpenWRT Image Builder"
+    "${BUILDER_ROOT_DIR%/}/getBuildroot.sh|Setup Buildroot Environment"
     "build_openwrt_fs|Verifying or Preparing OpenWRT Filesystem"
     "prepare_sshd|Preparing to start OpenSSH Daemon"
     "start_sshd|Starting OpenSSH Daemon"

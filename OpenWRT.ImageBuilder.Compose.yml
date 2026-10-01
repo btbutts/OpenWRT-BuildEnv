@@ -16,6 +16,8 @@ services:
     
     # Override target platform for the container
     platform: ${TARGET_PLATFORM:-} # Defaults to auto-select
+    env_file:
+      - scriptVars.env
 
     ports:
       - "22222:22"
