@@ -11,9 +11,13 @@ config BR2_PACKAGE_GROFF
 
 	  http://www.gnu.org/software/groff/
 
+if BR2_PACKAGE_GROFF
+
 config BR2_PACKAGE_GROFF_VERSION
 	string "groff version"
 	default "1.24.1"
 	help
 	  The version of groff to use. This is the version that will be
 	  downloaded and built.
+
+endif

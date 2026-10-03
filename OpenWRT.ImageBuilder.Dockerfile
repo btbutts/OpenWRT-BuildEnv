@@ -40,7 +40,7 @@ RUN sed -i '/^Components:/ s/$/ non-free/' \
     openssh-server sudo zsh lsb-release gnupg m4 \
     ${GRUB_PKGS} mtools dosfstools cpio gperf groff \
     && apt-get clean && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /var/run/sshd
+    && mkdir -p /var/run/sshd /etc/ssh
 
 # Copy local LLVM installation script, execute, and clean up
 COPY resources/llvm.sh /tmp/llvm.sh
@@ -78,10 +78,20 @@ RUN useradd -m -s /bin/zsh -G sudo builder && \
     mkdir -p /builder && \
     chown -R builder:builder /builder
 
-# Explicitly ensure password authentication and PAM are permitted in SSH config
-RUN sed -i -e 's/#PasswordAuthentication yes/PasswordAuthentication yes/' \
-           -e 's/#UsePAM yes/UsePAM yes/' /etc/ssh/sshd_config || \
-    (echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config && echo "UsePAM yes" >> /etc/ssh/sshd_config)
+# Explicitly ensure password authentication and PAM are permitted in
+# SSH config and copy SSH host keys from the build context if available
+RUN --mount=type=bind,source=buildEnvShare/.ssh_keys,target=/tmp/ssh_keys \
+    mkdir -p /etc/ssh && \
+    if [ -n "$(ls /tmp/ssh_keys/ssh_host_* 2>/dev/null)" ]; then \
+        cp /tmp/ssh_keys/ssh_host_* /etc/ssh/ && \
+        chown root:root /etc/ssh/ssh_host_* && \
+        chmod 600 /etc/ssh/ssh_host_*_key 2>/dev/null || true && \
+        chmod 644 /etc/ssh/ssh_host_*_key.pub 2>/dev/null || true; \
+    fi && \
+    (sed -i -e 's/#PasswordAuthentication yes/PasswordAuthentication yes/' \
+            -e 's/#UsePAM yes/UsePAM yes/' /etc/ssh/sshd_config || \
+     (echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config && \
+      echo "UsePAM yes" >> /etc/ssh/sshd_config))
 
 # Document container port
 EXPOSE 22

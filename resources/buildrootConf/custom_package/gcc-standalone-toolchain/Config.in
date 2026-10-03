@@ -15,6 +15,13 @@ config BR2_PACKAGE_GCC_STANDALONE_TOOLCHAIN
 	  Requires an internal Buildroot toolchain
 	  (BR2_TOOLCHAIN_BUILDROOT).
 
+	  Installed under /opt/gcc-standalone-toolchain on the target
+	  image only. Short names (gcc, g++, cc, ld, …) are relative
+	  symlinks in that bin directory beside the tuple-prefixed
+	  Bootlin binaries. Login shells append that bin directory to
+	  PATH. Nothing is written to /usr/bin, so this SDK is never
+	  used as the compiler that builds other Buildroot packages.
+
 	  The package makefile appends opt/gcc-standalone-toolchain to
 	  BR2_STRIP_EXCLUDE_DIRS so target-finalize does not strip the
 	  prebuilt SDK. Kconfig cannot select a string option.

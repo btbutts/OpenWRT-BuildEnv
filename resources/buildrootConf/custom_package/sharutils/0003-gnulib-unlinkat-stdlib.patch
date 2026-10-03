@@ -1,0 +1,15 @@
+4.9 gnulib unlinkat.c calls malloc/free without <stdlib.h>. GCC 14
+treats implicit function declarations as errors.
+
+Same include gnulib added in 2011 (Simon Josefsson, openat module).
+
+--- a/lib/unlinkat.c
++++ b/lib/unlinkat.c
+@@ -25,6 +25,7 @@
+ #include <fcntl.h>
+ #include <string.h>
+ #include <sys/stat.h>
++#include <stdlib.h>
+ 
+ #include "openat.h"
+ 

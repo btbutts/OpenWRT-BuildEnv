@@ -66,11 +66,46 @@ build_openwrt_fs() {
     fi
 }
 
+copy_ssh_keys() {
+    local SSHD_KEYS_DIR="/etc/ssh" ssh_keys=() \
+        key_file filename dest_file
+    
+    # Create the destination directory if it doesn't exist
+    mkdir -p "${WORKSPACE_DIR%/}/.ssh_keys"
+
+    # Find all keys securely and populate an array
+    if [ -d "$SSHD_KEYS_DIR" ]; then
+        while IFS= read -r -d '' key_file; do
+            ssh_keys+=("$key_file")
+        done < <(find "$SSHD_KEYS_DIR" -maxdepth 1 -name "*ssh_host_*_key*" -print0)
+    fi
+
+    # Copy discovered keys to host bind mount
+    for key_file in "${ssh_keys[@]}"; do
+        if [ -f "$key_file" ]; then
+
+            filename=$(basename "$key_file")
+            dest_file="${WORKSPACE_DIR%/}/.ssh_keys/$filename"
+            printf '\t%s%s%s\n' \
+                "--> Copying SSH host key: " "$filename" " to staging"
+            sudo cp -p "$key_file" "$dest_file"
+            if [[ "$filename" == *.pub ]]; then
+                sudo chmod 644 "$dest_file"
+            else
+                sudo chmod 600 "$dest_file"
+            fi
+
+        fi
+    done
+}
+
+
 #    "/builder/compileBuildroot.sh|Compile Installer Media Platform"
 STARTUP_SEQUENCE=(
     "${BUILDER_ROOT_DIR%/}/extractImageBuilder.sh|Setup OpenWRT Image Builder"
     "${BUILDER_ROOT_DIR%/}/getBuildroot.sh|Setup Buildroot Environment"
     "build_openwrt_fs|Verifying or Preparing OpenWRT Filesystem"
+    "copy_ssh_keys|Backing up SSH Keys if available"
     "prepare_sshd|Preparing to start OpenSSH Daemon"
     "start_sshd|Starting OpenSSH Daemon"
 )

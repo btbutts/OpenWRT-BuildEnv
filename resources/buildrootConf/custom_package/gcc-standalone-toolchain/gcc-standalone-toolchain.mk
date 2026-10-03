@@ -19,6 +19,7 @@ endif
 
 GCC_STANDALONE_TOOLCHAIN_LICENSE = GPL-3.0+, LGPL-2.1+
 GCC_STANDALONE_TOOLCHAIN_INSTALL_TARGET = YES
+GCC_STANDALONE_TOOLCHAIN_INSTALL_STAGING = NO
 
 # Map Buildroot CPU symbols onto Bootlin's tarball directory names.
 ifeq ($(BR2_x86_x86_64_v4),y)
@@ -113,31 +114,58 @@ define GCC_STANDALONE_TOOLCHAIN_RELOCATE
 	fi
 endef
 
+# Short names (gcc, g++, ld, …) live next to the tuple-prefixed binaries
+# in /opt/.../bin. Relative links stay inside the SDK; nothing is written
+# to /usr/bin. profile.d appends that bin dir so a login shell finds gcc
+# after /usr/bin (BusyBox/binutils keep the short names that already exist).
+define GCC_STANDALONE_TOOLCHAIN_SHORT_LINKS
+	if [ -d $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/bin ]; then \
+		echo ">>> gcc-standalone-toolchain: short names in bin/"; \
+		for gccbin in $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/bin/*-gcc; do \
+			[ -e "$$gccbin" ] || continue; \
+			tuple=$$(basename "$$gccbin" | sed 's/-gcc$$//'); \
+			[ -n "$$tuple" ] || continue; \
+			for f in $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/bin/$$tuple-*; do \
+				[ -e "$$f" ] || continue; \
+				base=$$(basename "$$f"); \
+				short=$${base#$$tuple-}; \
+				[ -n "$$short" ] && [ "$$short" != "$$base" ] || continue; \
+				dest=$(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/bin/$$short; \
+				if [ ! -e "$$dest" ]; then \
+					ln -sfn "$$base" "$$dest"; \
+					echo ">>> gcc-standalone-toolchain: $$short -> $$base"; \
+				fi; \
+			done; \
+			if [ -e $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/bin/gcc ] && \
+			   [ ! -e $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/bin/cc ]; then \
+				ln -sfn gcc $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/bin/cc; \
+				echo ">>> gcc-standalone-toolchain: cc -> gcc"; \
+			fi; \
+			break; \
+		done; \
+	fi
+endef
+
+# Copy the SDK into the target rootfs only. Do not symlink gcc/as/ld/strip
+# into /usr/bin: those names collide with the Buildroot cross toolchain if
+# anything in the build looks at TARGET_DIR.
 define GCC_STANDALONE_TOOLCHAIN_INSTALL_TARGET_CMDS
 	echo ">>> gcc-standalone-toolchain: installing SDK into $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)"
 	rm -rf $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)
-	mkdir -p $(GCC_STANDALONE_TOOLCHAIN_DESTDIR) $(TARGET_DIR)/usr/bin $(TARGET_DIR)/etc/profile.d
+	mkdir -p $(GCC_STANDALONE_TOOLCHAIN_DESTDIR) $(TARGET_DIR)/etc/profile.d
 	echo ">>> gcc-standalone-toolchain: copying extract (large tree, can take a minute)"
 	cp -a $(@D)/. $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/
 	echo ">>> gcc-standalone-toolchain: copy complete"
 	$(GCC_STANDALONE_TOOLCHAIN_RELOCATE)
-	echo ">>> gcc-standalone-toolchain: linking gcc/g++/binutils into /usr/bin"
-	if [ -d $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/bin ]; then \
-		for gccbin in $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/bin/*-gcc; do \
-			[ -e "$$gccbin" ] || continue; \
-			tuple=$$(basename "$$gccbin" | sed 's/-gcc$$//'); \
-			for tool in gcc g++ cpp c++ gcov as ld ar ranlib strip nm objcopy objdump readelf size; do \
-				if [ -e $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/bin/$$tuple-$$tool ]; then \
-					ln -sfn /opt/gcc-standalone-toolchain/bin/$$tuple-$$tool \
-						$(TARGET_DIR)/usr/bin/$$tool; \
-					echo ">>> gcc-standalone-toolchain: /usr/bin/$$tool -> $$tuple-$$tool"; \
-				fi; \
-			done; \
-			break; \
-		done; \
-	fi
+	$(GCC_STANDALONE_TOOLCHAIN_SHORT_LINKS)
 	echo ">>> gcc-standalone-toolchain: writing /etc/profile.d/gcc-standalone-toolchain.sh"
-	printf '%s\n' 'export PATH=/opt/gcc-standalone-toolchain/bin:$$PATH' \
+	printf '%s\n' \
+		'# Bootlin gcc for the booted image. Buildroot compiles packages' \
+		'# with output/host; this directory is not on that PATH.' \
+		'if [ -d /opt/gcc-standalone-toolchain/bin ]; then' \
+		'	PATH="$$PATH:/opt/gcc-standalone-toolchain/bin"' \
+		'	export PATH' \
+		'fi' \
 		> $(TARGET_DIR)/etc/profile.d/gcc-standalone-toolchain.sh
 	echo ">>> gcc-standalone-toolchain: target install finished"
 endef

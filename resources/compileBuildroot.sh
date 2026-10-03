@@ -29,6 +29,7 @@ while [ $# -gt 0 ]; do
         --rebuild-linux-toolchain) REBUILD_LX_TOOLCHAIN=1; shift ;;
         --copy-only) COPY_ONLY=1; shift ;;
         --target-finalize-clean) RM_TARGET_FINALIZE=1; shift ;;
+        --resume) RESUME=1; shift ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -108,8 +109,36 @@ if [[ "${COPY_ONLY}" -eq 1 ]]; then
         "Copying:" \
         "${BUILDROOT_CONF_DIR%/}/setup.config --> ${BUILDROOT_BUILDER_DIR%/}/configs/installer_defconfig" \
         "${BUILDROOT_CONF_DIR%/}/kernelOptions.config --> ${BUILDROOT_BUILDER_DIR%/}/kernelOptions.config" \
-        "${BUILDROOT_CONF_DIR%/}/busyboxOptions.config --> ${BUILDROOT_BUILDER_DIR%/}/busyboxOptions.config" 
+        "${BUILDROOT_CONF_DIR%/}/busyboxOptions.config --> ${BUILDROOT_BUILDER_DIR%/}/busyboxOptions.config"
     run_copy_kconfig
+    # installer_defconfig + olddefconfig write .config and fill any
+    # missing symbols (including string defaults such as
+    # BR2_PACKAGE_SHARUTILS_VERSION) without prompting. Without this,
+    # make busybox-menuconfig runs oldaskconfig and asks (NEW).
+    cd "${BUILDROOT_BUILDER_DIR%/}"
+    make installer_defconfig
+    printf '%s\n' "--> Applied installer_defconfig (Kconfig defaults filled in silently)"
+    exit 0
+fi
+
+run_compile_now() {
+    cd "${BUILDROOT_BUILDER_DIR%/}"
+    echo "--> Compiling specialized cross-toolchain and kernel utilities..."
+    make -j"$(nproc)"
+}
+
+run_move_images() {
+    echo "--> Exporting final installer assets out to Host mount..."
+    cp "${BUILDROOT_BUILDER_DIR%/}"/output/images/bzImage \
+        "${BUILDROOT_OUTPUT_DIR%/}"/vmlinuz-installer
+    cp "${BUILDROOT_BUILDER_DIR%/}"/output/images/rootfs.cpio.* \
+        "${BUILDROOT_OUTPUT_DIR%/}"/initramfs-installer.img
+}
+
+if [[ "${RESUME}" -eq 1 ]]; then
+    printf '%s\n' "--> Resuming compilation via --resume argument:"
+    run_compile_now
+    run_move_images
     exit 0
 fi
 
@@ -304,15 +333,10 @@ if [[ "${REBUILD_LINUX}" =~ ^(1|2)$ ]]; then
 fi
 
 # 6. Fire off specialized multi-threaded build pipeline pass
-echo "--> Compiling specialized cross-toolchain and kernel utilities..."
-make -j"$(nproc)"
+run_compile_now
 
 # 7. Map final deployment components directly to your shared Host volume
 cd "${BUILDROOT_BUILDER_DIR%/}"
-echo "--> Exporting final installer assets out to Host mount..."
-cp "${BUILDROOT_BUILDER_DIR%/}"/output/images/bzImage \
-    "${BUILDROOT_OUTPUT_DIR%/}"/vmlinuz-installer
-cp "${BUILDROOT_BUILDER_DIR%/}"/output/images/rootfs.cpio.* \
-    "${BUILDROOT_OUTPUT_DIR%/}"/initramfs-installer.img
+run_move_images
 
 exit 0
