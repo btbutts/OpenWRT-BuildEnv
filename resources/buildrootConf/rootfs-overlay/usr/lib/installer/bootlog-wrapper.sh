@@ -22,7 +22,7 @@ fi
         echo -n "rtc="
         hwclock -r 2>/dev/null || echo unavailable
     fi
-    /usr/sbin/installer-bootlog.sh
+    /usr/bin/installer-bootlog.sh
     rc=$?
     echo "installer-bootlog.service: finished rc=$rc"
     exit "$rc"

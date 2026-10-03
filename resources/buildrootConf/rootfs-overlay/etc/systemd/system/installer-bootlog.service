@@ -1,9 +1,9 @@
 [Unit]
 Description=OpenWRT installer USB boot-log capture
-Documentation=file:///usr/sbin/installer-bootlog.sh
+Documentation=file:///usr/bin/installer-bootlog.sh
 After=local-fs.target systemd-udevd.service
 Before=installer-wizard.service
-ConditionPathExists=/usr/sbin/installer-bootlog.sh
+ConditionPathExists=/usr/bin/installer-bootlog.sh
 ConditionPathExists=/usr/lib/installer/bootlog-wrapper.sh
 
 [Service]

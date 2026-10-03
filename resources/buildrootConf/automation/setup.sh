@@ -102,8 +102,8 @@ setup_fail() {
     cat /proc/mdstat 2>/dev/null || true
     setup_stop_console_log 2>/dev/null || true
     copy_setup_log_to_media || true
-    if [ -x /usr/sbin/installer-bootlog.sh ]; then
-        /usr/sbin/installer-bootlog.sh --flush || true
+    if [ -x /usr/bin/installer-bootlog.sh ]; then
+        /usr/bin/installer-bootlog.sh --flush || true
     fi
     sleep 8
     exit 1
@@ -158,7 +158,7 @@ safe_mdadm_wait() {
 if command -v systemctl >/dev/null 2>&1; then
     systemctl stop installer-bootlog.service 2>/dev/null || true
 fi
-pkill -f '/usr/sbin/installer-bootlog.sh' 2>/dev/null || true
+pkill -f '/usr/bin/installer-bootlog.sh' 2>/dev/null || true
 pkill -f '/usr/lib/installer/bootlog-wrapper.sh' 2>/dev/null || true
 installer_umount "$INSTALLER_MNT" 2>/dev/null || true
 
@@ -418,8 +418,8 @@ setup_stop_console_log
 mount -o remount,rw /src 2>/dev/null || true
 copy_setup_log_to_media || true
 installer_umount /src
-if [ -x /usr/sbin/installer-bootlog.sh ]; then
-    /usr/sbin/installer-bootlog.sh --flush || true
+if [ -x /usr/bin/installer-bootlog.sh ]; then
+    /usr/bin/installer-bootlog.sh --flush || true
 fi
 
 # Confirm execution pass

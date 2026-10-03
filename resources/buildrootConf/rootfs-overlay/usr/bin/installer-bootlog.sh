@@ -1,5 +1,5 @@
 #!/bin/bash
-# /usr/sbin/installer-bootlog.sh
+# /usr/bin/installer-bootlog.sh
 #
 # One-shot: identify the installer boot partition, copy kmsg/dmesg onto it
 # when USB capture is on (or --flush), then unmount and exit.

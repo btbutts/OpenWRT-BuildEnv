@@ -135,8 +135,107 @@ run_move_images() {
         "${BUILDROOT_OUTPUT_DIR%/}"/initramfs-installer.img
 }
 
+prepare_overlay() {
+    # Buildroot 2026.08 check-merged requires a merged-/usr overlay: /bin
+    # and /usr/sbin must be absent (or relative symlinks). Put every binary
+    # under usr/bin; the target skeleton already has /bin -> usr/bin and
+    # /usr/sbin -> bin.
+    mkdir -p "${BUILDROOT_OVERLAY_DIR}/usr/bin" \
+        "${BUILDROOT_OVERLAY_DIR}/usr/lib/installer" \
+        "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/multi-user.target.wants" \
+        "${BUILDROOT_OVERLAY_DIR}/usr/share/vim" \
+        "${BUILDROOT_OVERLAY_DIR}/etc/acpi/events"
+    # Older overlay copies kept installer-bootlog.sh under usr/sbin (split
+    # /usr). Move it before deleting that directory so a stale container
+    # COPY still produces a legal merged-/usr overlay.
+    if [ -f "${BUILDROOT_OVERLAY_DIR}/usr/sbin/installer-bootlog.sh" ] && \
+       [ ! -e "${BUILDROOT_OVERLAY_DIR}/usr/bin/installer-bootlog.sh" ]; then
+        mv "${BUILDROOT_OVERLAY_DIR}/usr/sbin/installer-bootlog.sh" \
+            "${BUILDROOT_OVERLAY_DIR}/usr/bin/installer-bootlog.sh"
+    fi
+    rm -rf "${BUILDROOT_OVERLAY_DIR:?}/bin" \
+        "${BUILDROOT_OVERLAY_DIR:?}/sbin" \
+        "${BUILDROOT_OVERLAY_DIR:?}/usr/sbin"
+
+    # systemd enablement: a unit is inactive until a wants/requires symlink
+    # exists. Recreate these every compile so they survive overlay churn.
+    ln -sfn ../installer-bootlog.service \
+        "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/multi-user.target.wants/installer-bootlog.service"
+    ln -sfn ../installer-wizard.service \
+        "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/multi-user.target.wants/installer-wizard.service"
+    printf '%s\n\t%s\n\t%s\n' "Ensured systemd multi-user.target.wants enablement links:" \
+        "installer-bootlog.service" \
+        "installer-wizard.service"
+
+    # SysV rcS scripts are unused under BR2_INIT_SYSTEMD.
+    rm -f "${BUILDROOT_OVERLAY_DIR}/etc/init.d/S99installer" \
+        "${BUILDROOT_OVERLAY_DIR}/etc/init.d/S20installer-bootlog"
+
+    # GNU vim installs /usr/bin/vim. BusyBox CONFIG_VI is off so this
+    # overlay name wins. On merged /usr, /bin/vi is the same inode.
+    ln -sfn vim "${BUILDROOT_OVERLAY_DIR}/usr/bin/vi"
+    printf '%s\n\t%s\n' "Ensured vi -> vim overlay symlink:" \
+        "${BUILDROOT_OVERLAY_DIR}/usr/bin/vi -> vim"
+
+    declare -A SCRIPTS_MAP=(
+        ["${BUILDROOT_CONF_DIR%/}/iTUI/wizard.sh"]="${BUILDROOT_OVERLAY_DIR}/usr/bin/wizard.sh"
+        ["${BUILDROOT_CONF_DIR%/}/automation/setup.sh"]="${BUILDROOT_OVERLAY_DIR}/usr/bin/setup.sh"
+        ["${BUILDROOT_OVERLAY_DIR}/usr/bin/installer-bootlog.sh"]=""
+        ["${BUILDROOT_OVERLAY_DIR}/usr/lib/installer/media.sh"]=""
+        ["${BUILDROOT_OVERLAY_DIR}/usr/lib/installer/bootlog-wrapper.sh"]=""
+        ["${BUILDROOT_CONF_DIR%/}/inittab/append.sh"]=""
+    )
+
+    # Sourced by login shells; the executable bit is unused, but keep them
+    # readable. zsh does not read /etc/profile unless zprofile/zshenv do.
+    for sourced in \
+        "${BUILDROOT_OVERLAY_DIR}/etc/profile" \
+        "${BUILDROOT_OVERLAY_DIR}/etc/zprofile" \
+        "${BUILDROOT_OVERLAY_DIR}/etc/zshenv" \
+        "${BUILDROOT_OVERLAY_DIR}/etc/zshrc"
+    do
+        if [ -f "$sourced" ]; then
+            chmod 644 "$sourced"
+            printf '%s%s\n' "Set shell-init permissions: --> " "$sourced"
+        fi
+    done
+
+    for file in "${!SCRIPTS_MAP[@]}"; do
+        dest="${SCRIPTS_MAP[$file]}"
+        if [ -f "$file" ]; then
+            if [ -n "$dest" ]; then
+                cp "$file" "$dest"
+                chmod +x "$dest"
+                printf '%s\n\t%s%s%s\n' "Copied and set executable permission:" \
+                    "$file" " --> " "$dest"
+            else
+                chmod +x "$file"
+                printf '%s%s\n' "Set executable permission: --> " "$file"
+            fi
+        fi
+    done
+
+    cat << 'EOF' > "${BUILDROOT_OVERLAY_DIR}/etc/acpi/events/power"
+event=button/power
+action=/etc/acpi/power.sh
+EOF
+
+    cat << 'EOF' > "${BUILDROOT_OVERLAY_DIR}/etc/acpi/power.sh"
+#!/bin/sh
+sync
+umount -a -r 2>/dev/null || true
+exec /sbin/poweroff -f
+EOF
+    chmod +x "${BUILDROOT_OVERLAY_DIR}/etc/acpi/power.sh" \
+        "${BUILDROOT_OVERLAY_DIR}/etc/acpi/events/power"
+    chmod 644 \
+        "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/installer-bootlog.service" \
+        "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/installer-wizard.service"
+}
+
 if [[ "${RESUME}" -eq 1 ]]; then
     printf '%s\n' "--> Resuming compilation via --resume argument:"
+    prepare_overlay
     run_compile_now
     run_move_images
     exit 0
@@ -171,95 +270,7 @@ if [ -n "${BR_APP}" ]; then
     fi
 fi
 
-# 2. Establish layout overlay pipeline trees
-mkdir -p "${BUILDROOT_OVERLAY_DIR}/usr/bin" \
-    "${BUILDROOT_OVERLAY_DIR}/bin" \
-    "${BUILDROOT_OVERLAY_DIR}/usr/lib/installer" \
-    "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/multi-user.target.wants" \
-    "${BUILDROOT_OVERLAY_DIR}/usr/share/vim" \
-    "${BUILDROOT_OVERLAY_DIR}/etc/acpi/events"
-
-# systemd enablement: a unit is inactive until a wants/requires symlink
-# exists. Recreate these every compile so they survive overlay churn.
-ln -sfn ../installer-bootlog.service \
-    "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/multi-user.target.wants/installer-bootlog.service"
-ln -sfn ../installer-wizard.service \
-    "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/multi-user.target.wants/installer-wizard.service"
-printf '%s\n\t%s\n\t%s\n' "Ensured systemd multi-user.target.wants enablement links:" \
-    "installer-bootlog.service" \
-    "installer-wizard.service"
-
-# SysV rcS scripts are unused under BR2_INIT_SYSTEMD.
-rm -f "${BUILDROOT_OVERLAY_DIR}/etc/init.d/S99installer" \
-    "${BUILDROOT_OVERLAY_DIR}/etc/init.d/S20installer-bootlog"
-
-# GNU vim installs /usr/bin/vim only. Its post-install vi symlink is
-# /bin/vi (split /usr) and BusyBox CONFIG_VI used to overwrite that.
-# Recreate both names in the overlay so target-finalize always ships vi.
-ln -sfn vim "${BUILDROOT_OVERLAY_DIR}/usr/bin/vi"
-ln -sfn ../usr/bin/vim "${BUILDROOT_OVERLAY_DIR}/bin/vi"
-printf '%s\n\t%s\n\t%s\n' "Ensured vi -> vim overlay symlinks:" \
-    "${BUILDROOT_OVERLAY_DIR}/usr/bin/vi -> vim" \
-    "${BUILDROOT_OVERLAY_DIR}/bin/vi -> ../usr/bin/vim"
-
-# 3. Inject installer user-space assets
-declare -A SCRIPTS_MAP=(
-    ["${BUILDROOT_CONF_DIR%/}/iTUI/wizard.sh"]="${BUILDROOT_OVERLAY_DIR}/usr/bin/wizard.sh"
-    ["${BUILDROOT_CONF_DIR%/}/automation/setup.sh"]="${BUILDROOT_OVERLAY_DIR}/usr/bin/setup.sh"
-    ["${BUILDROOT_OVERLAY_DIR}/usr/sbin/installer-bootlog.sh"]=""
-    ["${BUILDROOT_OVERLAY_DIR}/usr/lib/installer/media.sh"]=""
-    ["${BUILDROOT_OVERLAY_DIR}/usr/lib/installer/bootlog-wrapper.sh"]=""
-    ["${BUILDROOT_CONF_DIR%/}/inittab/append.sh"]=""
-)
-
-# Sourced by login shells; the executable bit is unused, but keep them
-# readable. zsh does not read /etc/profile unless zprofile/zshenv do.
-for sourced in \
-    "${BUILDROOT_OVERLAY_DIR}/etc/profile" \
-    "${BUILDROOT_OVERLAY_DIR}/etc/zprofile" \
-    "${BUILDROOT_OVERLAY_DIR}/etc/zshenv" \
-    "${BUILDROOT_OVERLAY_DIR}/etc/zshrc"
-do
-    if [ -f "$sourced" ]; then
-        chmod 644 "$sourced"
-        printf '%s%s\n' "Set shell-init permissions: --> " "$sourced"
-    fi
-done
-
-# Loop through the keys (source paths)
-for file in "${!SCRIPTS_MAP[@]}"; do
-    dest="${SCRIPTS_MAP[$file]}"
-    # Verify source file existance before copy and executable permission
-    if [ -f "$file" ]; then
-        if [ -n "$dest" ]; then
-            cp "$file" "$dest"
-            chmod +x "$dest"
-            printf '%s\n\t%s%s%s\n' "Copied and set executable permission:" \
-                "$file" " --> " "$dest"
-        else
-            chmod +x "$file"
-            printf '%s%s\n' "Set executable permission: --> " "$file"
-        fi
-    fi
-done
-
-# 4. ACPI power-button handler (acpid); systemd units live in the overlay.
-cat << 'EOF' > "${BUILDROOT_OVERLAY_DIR}/etc/acpi/events/power"
-event=button/power
-action=/etc/acpi/power.sh
-EOF
-
-cat << 'EOF' > "${BUILDROOT_OVERLAY_DIR}/etc/acpi/power.sh"
-#!/bin/sh
-sync
-umount -a -r 2>/dev/null || true
-exec /sbin/poweroff -f
-EOF
-chmod +x "${BUILDROOT_OVERLAY_DIR}/etc/acpi/power.sh" \
-    "${BUILDROOT_OVERLAY_DIR}/etc/acpi/events/power"
-chmod 644 \
-    "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/installer-bootlog.service" \
-    "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/installer-wizard.service"
+prepare_overlay
 
 # 5. Load and evaluate target configurations
 cd "${BUILDROOT_BUILDER_DIR%/}"
