@@ -6,12 +6,18 @@ Wants=installer-bootlog.service
 # Maintenance GRUB entry: installer.mode=shell — skip wizard, leave tty1 to getty.
 ConditionKernelCommandLine=!installer.mode=shell
 ConditionPathExists=/usr/bin/wizard.sh
-Conflicts=getty@tty1.service serial-getty@tty1.service
-Before=getty@tty1.service serial-getty@tty1.service
+Conflicts=console-getty.service getty@tty1.service serial-getty@tty1.service
+Before=console-getty.service getty@tty1.service serial-getty@tty1.service
+# Conflicts only *stops* getty. Start console-getty again so login follows
+# kernel console= (tty1, ttyS0, …) from GRUB.
+OnSuccess=console-getty.service
+OnFailure=console-getty.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=no
+# dialog Cancel is 1; treat that as a normal end so the unit is not FAILED.
+SuccessExitStatus=0 1
 ExecStart=/usr/bin/wizard.sh
 StandardInput=tty
 StandardOutput=tty

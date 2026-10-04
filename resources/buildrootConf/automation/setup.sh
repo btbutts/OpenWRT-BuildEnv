@@ -429,18 +429,9 @@ if dialog --yesno "Confirm YES to reboot the system immediately, or NO to launch
     sleep 5
     reboot -f
 else
-    echo "--> Entering interactive shell as requested by user..."
+    echo "--> Returning to a root login prompt on the kernel console..."
     clear
-    # dialog leaves the VT in cbreak/raw; without ISIG, Ctrl+C is echoed
-    # as a literal. Claim a controlling tty so job-control signals work.
     stty sane < /dev/tty1 > /dev/tty1 2>/dev/null || stty sane 2>/dev/null || true
-    if [ -x /bin/zsh ]; then
-        MAINT_SHELL=/bin/zsh
-    else
-        MAINT_SHELL=/bin/bash
-    fi
-    if command -v setsid >/dev/null 2>&1; then
-        exec setsid -c "$MAINT_SHELL" -l < /dev/tty1 > /dev/tty1 2>&1
-    fi
-    exec "$MAINT_SHELL" -l < /dev/tty1 > /dev/tty1 2>&1
+    # installer-wizard.service OnSuccess starts console-getty.service.
+    exit 0
 fi

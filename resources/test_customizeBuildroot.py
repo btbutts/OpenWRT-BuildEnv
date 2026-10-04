@@ -344,5 +344,73 @@ class PatchLinuxToolsTests(unittest.TestCase):
             shutil.rmtree(td)
 
 
+class PatchOpenvmtoolsTests(unittest.TestCase):
+    """Stock package/openvmtools C23 patch written at --customize time."""
+
+    def setUp(self) -> None:
+        """Temporary package/openvmtools directory."""
+        self.td = Path(tempfile.mkdtemp())
+        self.pkg = self.td / "openvmtools"
+        self.pkg.mkdir()
+
+    def tearDown(self) -> None:
+        """Remove the temp tree."""
+        shutil.rmtree(self.td)
+
+    def test_missing_dir_is_noop(self) -> None:
+        """Incomplete trees and unit fixtures without openvmtools skip."""
+        self.assertIsNone(cb.patch_openvmtools(self.td / "missing"))
+
+    def test_writes_next_index_after_stock_patches(self) -> None:
+        """2025.08/2026.08 trees end at 0014; this patch becomes 0015."""
+        (self.pkg / "0014-CVE-2025-22247-1100-1225-VGAuth-updates.patch").write_text(
+            "unrelated\n"
+        )
+        dest = cb.patch_openvmtools(self.pkg)
+        self.assertIsNotNone(dest)
+        self.assertEqual(dest.name, "0015-c23-MXUserTryAcquireForceFail.patch")
+        text = dest.read_text()
+        self.assertIn("-" + cb.OPENVMTOOLS_C23_OLD, text)
+        self.assertIn("+" + cb.OPENVMTOOLS_C23_NEW, text)
+        self.assertIn("diff --git a/lib/lock/ul.c b/lib/lock/ul.c", text)
+
+    def test_idempotent(self) -> None:
+        """A second --customize does not add another numbered file."""
+        first = cb.patch_openvmtools(self.pkg)
+        second = cb.patch_openvmtools(self.pkg)
+        self.assertIsNotNone(first)
+        self.assertIsNone(second)
+        patches = list(self.pkg.glob("*.patch"))
+        self.assertEqual(len(patches), 1)
+
+    def test_skips_when_hunk_already_present(self) -> None:
+        """Do not add 0015 if a later Buildroot already ships the same hunk."""
+        (self.pkg / "0015-upstream-c23.patch").write_text(cb.OPENVMTOOLS_C23_PATCH)
+        self.assertIsNone(cb.patch_openvmtools(self.pkg))
+        self.assertEqual(len(list(self.pkg.glob("*.patch"))), 1)
+
+    def test_customize_writes_openvmtools_patch(self) -> None:
+        """customize_buildroot drops the patch into package/openvmtools."""
+        br = self.td / "br"
+        custom = self.td / "custom"
+        br.mkdir()
+        (br / "Config.in").write_text('menu "x"\nendmenu\n')
+        shutil.copy(SAMPLE, br / "Makefile")
+        (br / "package").mkdir()
+        (br / "package" / "Config.in").write_text(
+            'menu "Target packages"\nendmenu\n'
+        )
+        groff = custom / "groff"
+        groff.mkdir(parents=True)
+        (groff / "Config.in").write_text('config BR2_PACKAGE_GROFF\n\tbool "g"\n')
+        ovm = br / "package" / "openvmtools"
+        ovm.mkdir()
+        (ovm / "0014-CVE.patch").write_text("stock\n")
+        cb.customize_buildroot(br, custom)
+        written = ovm / "0015-c23-MXUserTryAcquireForceFail.patch"
+        self.assertTrue(written.is_file())
+        self.assertIn(cb.OPENVMTOOLS_C23_NEW, written.read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

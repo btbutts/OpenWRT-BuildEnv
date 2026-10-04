@@ -3,9 +3,29 @@ set -e
 
 echo "installer shell=$0 bash=${BASH_VERSION:-NOT_BASH} exe=$(readlink -f /proc/self/exe)" > /dev/tty1
 
+# dialog Cancel=1, ESC=255. Those are a normal end: hand tty1 back to getty.
+user_quit() {
+    clear
+    stty sane < /dev/tty1 > /dev/tty1 2>/dev/null || stty sane 2>/dev/null || true
+    exit 0
+}
+
+# Capture dialog --stdout; Cancel/ESC leaves the wizard without failing the unit.
+dlg_capture() {
+    local rc=0 out
+    out=$(dialog --stdout "$@") || rc=$?
+    if [ "$rc" -eq 1 ] || [ "$rc" -eq 255 ]; then
+        user_quit
+    fi
+    if [ "$rc" -ne 0 ]; then
+        exit "$rc"
+    fi
+    printf '%s\n' "$out"
+}
+
 if [ ! -f /usr/lib/installer/media.sh ]; then
     dialog --msgbox "Error: installer media helper is missing (/usr/lib/installer/media.sh)." 8 60
-    exit 1
+    user_quit
 fi
 # shellcheck source=/usr/lib/installer/media.sh: disable=SC1091
 . /usr/lib/installer/media.sh
@@ -25,30 +45,30 @@ done < <(lsblk -dno NAME,SIZE,TYPE)
 
 if [ ${#DIALOG_ARGS[@]} -eq 0 ]; then
     dialog --msgbox "Error: No target disks available for installation.\nAll detected drives are currently in use by the active OS or installer environment." 8 60
-    exit 1
+    user_quit
 fi
 
 # --- Tier 3: Present the Checkbox Interface via Dialog ---
 # Fix: Pass individual arguments cleanly without wrapping the array in double quotes!
-SELECTED_RAW=$(dialog --stdout --checklist "Select 2 to 4 target disks for OpenWRT RAID:" 15 60 5 "${DIALOG_ARGS[@]}")
+SELECTED_RAW=$(dlg_capture --checklist "Select 2 to 4 target disks for OpenWRT RAID:" 15 60 5 "${DIALOG_ARGS[@]}")
 
 read -r -a DISK_ARRAY <<< "$SELECTED_RAW"
 DISK_COUNT=${#DISK_ARRAY[@]}
 
 if [ "$DISK_COUNT" -lt 2 ] || [ "$DISK_COUNT" -gt 4 ]; then
     dialog --msgbox "Error: You must select between 2 and 4 disks to construct the RAID matrix." 6 60
-    exit 1
+    user_quit
 fi
 
 # Refuse the installer boot disk even if it leaked into the checklist.
 for _disk in "${DISK_ARRAY[@]}"; do
     if [ -n "$INSTALLER_DISK" ] && [ "$_disk" = "$INSTALLER_DISK" ]; then
         dialog --msgbox "Error: ${_disk} is the installer boot media and cannot be a RAID target." 8 60
-        exit 1
+        user_quit
     fi
     if ! installer_is_target_disk "$_disk"; then
         dialog --msgbox "Error: ${_disk} is not a writable installation target." 8 60
-        exit 1
+        user_quit
     fi
 done
 
@@ -61,13 +81,13 @@ if [ "$DISK_COUNT" -eq 4 ]; then
     sleep 3
 else
     # 2 or 3 Disks -> Let them choose RAID 1 or RAID 0
-    ROOT_RAID_LEVEL=$(dialog --stdout --menu "Select RAID Level for OpenWRT-ROOT (/md1):" 10 50 2 \
+    ROOT_RAID_LEVEL=$(dlg_capture --menu "Select RAID Level for OpenWRT-ROOT (/md1):" 10 50 2 \
         "1" "RAID 1 (Mirroring - Recommended)" \
         "0" "RAID 0 (Striping - No Redundancy)")
 fi
 
 # Ask for Size Constraint
-SIZE_CHOICE=$(dialog --stdout --menu "Configure ROOT Partition Size:" 10 60 2 \
+SIZE_CHOICE=$(dlg_capture --menu "Configure ROOT Partition Size:" 10 60 2 \
     "MAX" "Use all remaining disk space" \
     "CUSTOM" "Specify custom size in Gigabytes")
 
@@ -82,7 +102,7 @@ TOTAL_DISK_GB=$(( DISK_BYTES / 1024 / 1024 / 1024 ))
 MAX_AVAILABLE_ROOT_GB=$(( TOTAL_DISK_GB - 2 ))
 
 if [[ "$SIZE_CHOICE" == "CUSTOM" ]]; then
-    ROOT_SIZE=$(dialog --stdout --inputbox "Enter ROOT partition size per disk (in GB):" 8 50 "20")
+    ROOT_SIZE=$(dlg_capture --inputbox "Enter ROOT partition size per disk (in GB):" 8 50 "20")
     ROOT_PART_END="+${ROOT_SIZE}G"
     ESTIMATED_ROOT_GB=$ROOT_SIZE
 else
@@ -124,9 +144,8 @@ fi
 
 # Confirm execution pass
 if ! dialog --yesno "WARNING: This will completely erase all data on: ${DISK_ARRAY[*]}.\n\nDo you want to proceed?" 10 60; then
-    clear
     echo "--> Deployment canceled by user."
-    exit 1
+    user_quit
 fi
 
 # Record wizard selections before setup.sh takes over the console.

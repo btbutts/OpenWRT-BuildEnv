@@ -41,14 +41,16 @@ RUN sed -i '/^Components:/ s/$/ non-free/' \
     ${GRUB_PKGS} mtools dosfstools cpio gperf groff \
     python3-matplotlib python3-numpy python3-flake8 \
     && apt-get clean && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /var/run/sshd /etc/ssh
+    && mkdir -p /var/run/sshd
 
 # Copy local LLVM installation script, execute, and clean up
 COPY resources/llvm.sh /tmp/llvm.sh
 RUN chmod +x /tmp/llvm.sh \
     && /tmp/llvm.sh 21 all \
     && rm -f /tmp/llvm.sh \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /etc/ssh
 
 # Programmatically Standardize System-Wide PATH
 RUN FULL_PATH=$(printf '%s' "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$(getconf PATH)" | \

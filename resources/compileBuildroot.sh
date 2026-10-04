@@ -143,6 +143,9 @@ prepare_overlay() {
     mkdir -p "${BUILDROOT_OVERLAY_DIR}/usr/bin" \
         "${BUILDROOT_OVERLAY_DIR}/usr/lib/installer" \
         "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/multi-user.target.wants" \
+        "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/getty.target.wants" \
+        "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/console-getty.service.d" \
+        "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/supervisord.service.d" \
         "${BUILDROOT_OVERLAY_DIR}/usr/share/vim" \
         "${BUILDROOT_OVERLAY_DIR}/etc/acpi/events"
     # Older overlay copies kept installer-bootlog.sh under usr/sbin (split
@@ -163,9 +166,12 @@ prepare_overlay() {
         "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/multi-user.target.wants/installer-bootlog.service"
     ln -sfn ../installer-wizard.service \
         "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/multi-user.target.wants/installer-wizard.service"
-    printf '%s\n\t%s\n\t%s\n' "Ensured systemd multi-user.target.wants enablement links:" \
+    ln -sfn /lib/systemd/system/console-getty.service \
+        "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/getty.target.wants/console-getty.service"
+    printf '%s\n\t%s\n\t%s\n\t%s\n' "Ensured systemd enablement links:" \
         "installer-bootlog.service" \
-        "installer-wizard.service"
+        "installer-wizard.service" \
+        "console-getty.service"
 
     # SysV rcS scripts are unused under BR2_INIT_SYSTEMD.
     rm -f "${BUILDROOT_OVERLAY_DIR}/etc/init.d/S99installer" \
