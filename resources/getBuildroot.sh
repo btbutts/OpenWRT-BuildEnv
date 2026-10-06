@@ -134,7 +134,7 @@ update_kernel_support() {
         printf '%s\n' "Error: Buildroot is not extracted at ${BUILDROOT_BUILDER_DIR%/} (missing Config.in)." >&2
         return 1
     fi
-    printf '%s\n' "--> Updating kernel/header latest to 7.2.8 via ${CUSTOMIZER}..."
+    printf '%s\n' "--> Updating kernel/header latest to 7.2.9 via ${CUSTOMIZER}..."
     run_customizer \
         --br-path "${BUILDROOT_BUILDER_DIR%/}" \
         --update-kernel-support

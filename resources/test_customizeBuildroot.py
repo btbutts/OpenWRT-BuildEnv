@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+# pylint: disable=too-many-lines
 """Tests for customizeBuildroot Makefile, Config.in, and custom-package edits."""
 
 from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -516,7 +518,7 @@ config BR2_LINUX_KERNEL_VERSION
 
 
 class UpdateKernelSupportTests(unittest.TestCase):
-    """--update-kernel-support adds 7.2.8 as Buildroot 2026.08 latest."""
+    """--update-kernel-support adds 7.2.9 as Buildroot 2026.08 latest."""
 
     def setUp(self) -> None:
         """Minimal 2026.08 linux/headers/toolchain Kconfig tree."""
@@ -569,7 +571,7 @@ class UpdateKernelSupportTests(unittest.TestCase):
             r"\tselect BR2_KERNEL_HEADERS_LATEST\n",
         )
         self.assertIn("\tdefault BR2_KERNEL_HEADERS_7_2\n", text)
-        self.assertIn('\tdefault "7.2.8"\tif BR2_KERNEL_HEADERS_7_2\n', text)
+        self.assertIn('\tdefault "7.2.9"\tif BR2_KERNEL_HEADERS_7_2\n', text)
         self.assertIn('bool "7.2.x or later"', text)
         self.assertIn('bool "7.1.x"', text)
         self.assertNotIn('bool "7.1.x or later"', text)
@@ -600,8 +602,8 @@ class UpdateKernelSupportTests(unittest.TestCase):
             r'\tdefault "7.1" if BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1\n',
         )
 
-    def test_latest_kernel_version_is_7_2_8(self) -> None:
-        """LATEST_VERSION prompt, AT_LEAST select, and VERSION default become 7.2.8."""
+    def test_latest_kernel_version_is_7_2_9(self) -> None:
+        """LATEST_VERSION prompt, AT_LEAST select, and VERSION default become 7.2.9."""
         self._apply()
         text = (self.br / "linux" / "Config.in").read_text()
         self.assertIn('bool "Latest version (7.2)"', text)
@@ -616,14 +618,14 @@ class UpdateKernelSupportTests(unittest.TestCase):
             "if BR2_KERNEL_HEADERS_AS_KERNEL",
             text,
         )
-        self.assertIn('default "7.2.8" if BR2_LINUX_KERNEL_LATEST_VERSION', text)
+        self.assertIn('default "7.2.9" if BR2_LINUX_KERNEL_LATEST_VERSION', text)
         self.assertNotIn('default "7.1.13" if BR2_LINUX_KERNEL_LATEST_VERSION', text)
 
     def test_version_patch_dirs_follow_7_1_13(self) -> None:
-        """7.2.8 reuses the same from-6.17 patch dir as 7.1.13."""
+        """7.2.9 reuses the same from-6.17 patch dir as 7.1.13."""
         self._apply()
-        linux_link = self.br / "linux" / "7.2.8"
-        headers_link = self.br / "package" / "linux-headers" / "7.2.8"
+        linux_link = self.br / "linux" / "7.2.9"
+        headers_link = self.br / "package" / "linux-headers" / "7.2.9"
         self.assertTrue(linux_link.is_symlink())
         self.assertEqual(linux_link.readlink().as_posix(), "from-6.17")
         self.assertTrue(headers_link.is_symlink())
@@ -670,6 +672,8 @@ class UpdateKernelSupportTests(unittest.TestCase):
         self.assertNotIn("BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2", toolchain)
         self.assertIn('default "7.1.13" if BR2_LINUX_KERNEL_LATEST_VERSION', linux)
         self.assertIn("config BR2_KEEP_MAN_PAGES_DOCS", (self.br / "Config.in").read_text())
+        self.assertFalse((self.br / "linux" / "from-6.17" / "get-hash.mk").exists())
+        self.assertNotIn("include linux/from-6.17/get-hash.mk", (self.br / "Makefile").read_text())
 
     def test_cli_update_kernel_support_skips_customize(self) -> None:
         """python customizeBuildroot/main.py --update-kernel-support is kernel-only."""
@@ -697,6 +701,115 @@ class UpdateKernelSupportTests(unittest.TestCase):
         self.assertIn("--update-kernel-support", script)
         self.assertIn("customizeBuildroot/main.py", script)
         self.assertIn('PYTHONPATH="${BUILDER_ROOT_DIR%/}', script)
+
+    def test_installs_get_hash_mk(self) -> None:
+        """--update-kernel-support drops get-hash.mk next to linux.hash."""
+        self._apply()
+        dest = self.br / "linux" / "from-6.17" / "get-hash.mk"
+        self.assertTrue(dest.is_file())
+        text = dest.read_text(encoding="utf-8")
+        self.assertIn("LINUX_HASH_FILE := $(dir $(lastword $(MAKEFILE_LIST)))linux.hash", text)
+        self.assertIn("LINUX_PRE_DOWNLOAD_HOOKS += LINUX_GET_HASH", text)
+        self.assertIn(
+            "LINUX_HEADERS_PRE_DOWNLOAD_HOOKS += LINUX_HEADERS_GET_HASH",
+            text,
+        )
+        self.assertIn(
+            "https://cdn.kernel.org/pub/linux/kernel/v$$major.x/sha256sums.asc",
+            text,
+        )
+        self.assertIn(
+            "# From https://www.kernel.org/pub/linux/kernel/v$$major.x/sha256sums.asc",
+            text,
+        )
+        makefile = (self.br / "Makefile").read_text(encoding="utf-8")
+        self.assertIn("include linux/from-6.17/get-hash.mk", makefile)
+        self.assertEqual(makefile.count("include linux/from-6.17/get-hash.mk"), 1)
+        self.assertLess(
+            makefile.index("include linux/from-6.17/get-hash.mk"),
+            makefile.index("include $(sort $(wildcard package/*/*.mk))"),
+        )
+        in_define = False
+        for line in text.splitlines():
+            if line.startswith("define "):
+                in_define = True
+                continue
+            if line.startswith("endef"):
+                in_define = False
+                continue
+            if in_define and line.strip():
+                self.assertTrue(line.startswith("\t"), line)
+        self._apply()
+        self.assertEqual(
+            (self.br / "Makefile").read_text(encoding="utf-8").count(
+                "include linux/from-6.17/get-hash.mk"
+            ),
+            1,
+        )
+        self.assertEqual(dest.read_text(encoding="utf-8"), text)
+
+    def test_get_hash_awk_appends_under_matching_series_section(self) -> None:
+        """New sha256 lands under the v7.x comment, above v6.x and licenses."""
+        hash_file = self.td / "linux.hash"
+        hash_file.write_text(
+            "# From https://www.kernel.org/pub/linux/kernel/v7.x/sha256sums.asc\n"
+            "sha256  614d95fafdcb5cce2b6620e7edc6afbb606bffd4655405586815d84687841ad7"
+            "  linux-7.1.13.tar.xz\n"
+            "\n"
+            "# From https://www.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc\n"
+            "sha256  ae826f33111fea6f1d279dde7299d7463c8dfd204aeb75a8fb5432bc60a28191"
+            "  linux-6.18.49.tar.xz\n"
+            "\n"
+            "# Licenses hashes\n"
+            "sha256  fb5a425bd3b3cd6071a3a9aff9909a859e7c1158d54d32e07658398cd67eb6a0"
+            "  COPYING\n",
+            encoding="utf-8",
+        )
+        section = (
+            "# From https://www.kernel.org/pub/linux/kernel/v7.x/sha256sums.asc"
+        )
+        line = (
+            "sha256  b4c5dfbe51a364a6c7f03869200f88c8e1f77403539005f14b7fc6bc91b8d8ba"
+            "  linux-7.2.9.tar.xz"
+        )
+        out = self.td / "linux.hash.out"
+        awk = r"""
+$0 == section { print; insec = 1; next }
+insec && (/^$/ || /^# /) { print line; print; inserted = 1; insec = 0; next }
+!inserted && $0 == "# Licenses hashes" {
+    print section; print line; print ""; inserted = 1
+}
+{ print }
+END {
+    if (insec && !inserted) print line
+    if (!inserted) { print ""; print section; print line }
+}
+"""
+        with out.open("w", encoding="utf-8") as stdout:
+            subprocess.run(
+                [
+                    "awk",
+                    "-v",
+                    f"section={section}",
+                    "-v",
+                    f"line={line}",
+                    awk,
+                    str(hash_file),
+                ],
+                check=True,
+                stdout=stdout,
+            )
+        text = out.read_text(encoding="utf-8")
+        v7 = text.index(section)
+        new = text.index("linux-7.2.9.tar.xz")
+        v6 = text.index("v6.x/sha256sums.asc")
+        lic = text.index("# Licenses hashes")
+        self.assertLess(v7, new)
+        self.assertLess(new, v6)
+        self.assertLess(v6, lic)
+        self.assertIn("linux-7.1.13.tar.xz", text)
+        self.assertIn("linux-6.18.49.tar.xz", text)
+        self.assertIn("COPYING", text)
 
 
 _SYSTEMD_CONFIG_2026_08 = """\

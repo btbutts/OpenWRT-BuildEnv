@@ -9,8 +9,23 @@ from ..util import write_if_changed
 
 # 2026.08 latest kernel/headers stop at 7.1.13. --update-kernel-support
 # promotes 7.2.9 the same way Buildroot itself bumps a latest series.
+# Kconfig prompts use the series (7.2); VERSION / patch dirs use the full tag.
 KERNEL_PREV_FULL = "7.1.13"
 KERNEL_LATEST_FULL = "7.2.9"
+KERNEL_PREV_SERIES = ".".join(KERNEL_PREV_FULL.split(".")[:2])
+KERNEL_LATEST_SERIES = ".".join(KERNEL_LATEST_FULL.split(".")[:2])
+KERNEL_HASH_DIR = "from-6.17"
+GET_HASH_MK_NAME = "get-hash.mk"
+GET_HASH_INCLUDE_MARKER = f"include linux/{KERNEL_HASH_DIR}/{GET_HASH_MK_NAME}"
+GET_HASH_INCLUDE_COMMENT = (
+    "# JIT-append kernel.org sha256 lines for linux/linux-headers tarballs.\n"
+)
+GET_HASH_INCLUDE_BLOCK = (
+    f"\n{GET_HASH_INCLUDE_COMMENT}{GET_HASH_INCLUDE_MARKER}\n"
+)
+# Register hooks before package/*.mk and linux/linux.mk so both
+# linux-headers and linux see LINUX_*_PRE_DOWNLOAD_HOOKS.
+PACKAGE_WILDCARD_INCLUDE = "include $(sort $(wildcard package/*/*.mk))\n"
 
 
 def patch_kernel_headers_host(path: Path) -> None:
@@ -157,8 +172,8 @@ def patch_linux_latest_version(path: Path) -> None:
     original = text
 
     text = text.replace(
-        '\tbool "Latest version (7.1)"\n',
-        '\tbool "Latest version (7.2.9)"\n',
+        f'\tbool "Latest version ({KERNEL_PREV_SERIES})"\n',
+        f'\tbool "Latest version ({KERNEL_LATEST_SERIES})"\n',
         1,
     )
 
@@ -175,15 +190,16 @@ def patch_linux_latest_version(path: Path) -> None:
     text = re.sub(
         r'(config BR2_LINUX_KERNEL_VERSION\n'
         r"\tstring\n"
-        r'\tdefault )"7\.1\.13"( if BR2_LINUX_KERNEL_LATEST_VERSION)',
-        r'\g<1>"7.2.9"\2',
+        rf'\tdefault )"{re.escape(KERNEL_PREV_FULL)}"( if BR2_LINUX_KERNEL_LATEST_VERSION)',
+        rf'\g<1>"{KERNEL_LATEST_FULL}"\2',
         text,
         count=1,
     )
 
-    if 'bool "Latest version (7.2)"' not in text:
+    if f'bool "Latest version ({KERNEL_LATEST_SERIES})"' not in text:
         raise SystemExit(
-            f"Error: BR2_LINUX_KERNEL_LATEST_VERSION 7.1 prompt not found in {path}"
+            f"Error: BR2_LINUX_KERNEL_LATEST_VERSION {KERNEL_PREV_SERIES} "
+            f"prompt not found in {path}"
         )
     if "select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2 if BR2_KERNEL_HEADERS_AS_KERNEL" not in text:
         raise SystemExit(
@@ -228,12 +244,59 @@ def link_kernel_version_patch_dirs(br_path: Path) -> None:
         print(f"--> Linked kernel patch dir {dest} -> {dest.readlink()}")
 
 
+def write_get_hash_mk(br_path: Path) -> None:
+    """
+    Install ``linux/from-6.17/get-hash.mk`` and include it from the Makefile.
+
+    The include is inserted before ``package/*/*.mk`` so linux-headers
+    and linux both see the PRE_DOWNLOAD_HOOKS. The fragment copies a
+    missing ``linux-*.tar.xz`` sha256 from kernel.org ``sha256sums.asc``
+    into the existing ``linux.hash`` before Buildroot's hash check.
+    """
+    dest_dir = br_path / "linux" / KERNEL_HASH_DIR
+    if not dest_dir.is_dir():
+        raise SystemExit(
+            f"Error: {dest_dir} is missing; cannot install {GET_HASH_MK_NAME}"
+        )
+    src = Path(__file__).with_name(GET_HASH_MK_NAME)
+    if not src.is_file():
+        raise SystemExit(f"Error: {src} is missing from customizeBuildroot")
+    dest = dest_dir / GET_HASH_MK_NAME
+    dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    print(f"--> Wrote {dest}")
+
+    makefile = br_path / "Makefile"
+    text = makefile.read_text(encoding="utf-8")
+    if GET_HASH_INCLUDE_MARKER in text:
+        print(f"--> {GET_HASH_INCLUDE_MARKER} already present in {makefile}")
+        return
+    if PACKAGE_WILDCARD_INCLUDE in text:
+        makefile.write_text(
+            text.replace(
+                PACKAGE_WILDCARD_INCLUDE,
+                GET_HASH_INCLUDE_BLOCK + PACKAGE_WILDCARD_INCLUDE,
+                1,
+            ),
+            encoding="utf-8",
+        )
+        print(
+            f"--> Inserted {GET_HASH_INCLUDE_MARKER} before package/*.mk in {makefile}"
+        )
+        return
+    makefile.write_text(
+        text.rstrip("\n") + "\n" + GET_HASH_INCLUDE_BLOCK,
+        encoding="utf-8",
+    )
+    print(f"--> Appended {GET_HASH_INCLUDE_MARKER} to {makefile}")
+
+
 def update_kernel_support(br_path: Path) -> None:
     """
     Patch an extracted 2026.08 tree so latest kernel/headers are 7.2.9.
 
     Edits ``package/linux-headers/Config.in.host``, ``toolchain/Config.in``,
-    and ``linux/Config.in``. Does not run ``customize_buildroot``.
+    and ``linux/Config.in``. Installs ``linux/from-6.17/get-hash.mk``.
+    Does not run ``customize_buildroot``.
     """
     headers = br_path / "package" / "linux-headers" / "Config.in.host"
     toolchain = br_path / "toolchain" / "Config.in"
@@ -248,4 +311,5 @@ def update_kernel_support(br_path: Path) -> None:
     patch_toolchain_headers_at_least(toolchain)
     patch_linux_latest_version(linux_cfg)
     link_kernel_version_patch_dirs(br_path)
+    write_get_hash_mk(br_path)
     print("--> update-kernel-support completed successfully.")
