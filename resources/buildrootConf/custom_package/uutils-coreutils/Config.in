@@ -1,0 +1,39 @@
+config BR2_PACKAGE_UUTILS_COREUTILS
+	bool "uutils-coreutils"
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	depends on BR2_USE_MMU
+	depends on !BR2_PACKAGE_COREUTILS
+	select BR2_PACKAGE_HOST_RUSTC
+	help
+	  Rust rewrite of GNU coreutils (uutils). Installed as a
+	  multicall /usr/bin/coreutils with applets as symlinks
+	  (ls, cp, dd, stty, ...), matching GNU coreutils without
+	  BR2_PACKAGE_COREUTILS_INDIVIDUAL_BINARIES.
+
+	  Mutually exclusive with GNU coreutils
+	  (BR2_PACKAGE_COREUTILS). Tag 0.12.0 needs rustc >= 1.88.
+	  BusyBox is optional: when it is enabled, this package
+	  installs after it so ls/cp/dd win over BusyBox applets.
+
+	  https://github.com/uutils/coreutils
+
+if BR2_PACKAGE_UUTILS_COREUTILS
+
+config BR2_PACKAGE_UUTILS_COREUTILS_VERSION
+	string "uutils-coreutils version (GitHub tag)"
+	default "0.12.0"
+	help
+	  GitHub tag from uutils/coreutils, for example 0.12.0.
+	  Leave this unset to use that default.
+
+	  At download time the tag is checked against
+	  https://api.github.com/repos/uutils/coreutils/tags
+	  An unknown tag fails the build. If uutils-coreutils.hash
+	  does not yet list that tag's tarball, its sha256 is appended.
+
+endif
+
+comment "uutils-coreutils needs host rustc, and conflicts with GNU coreutils"
+	depends on BR2_USE_MMU
+	depends on !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS || \
+		BR2_PACKAGE_COREUTILS

@@ -12,7 +12,9 @@ endif
 HEXEDIT_SITE = $(call github,pixel,hexedit,$(HEXEDIT_VERSION))
 HEXEDIT_SOURCE = hexedit-$(HEXEDIT_VERSION).tar.gz
 HEXEDIT_TAGS_URL = https://api.github.com/repos/pixel/hexedit/tags?per_page=100
-HEXEDIT_HASH_FILE := $(TOPDIR)/package/hexedit/hexedit.hash
+# Immediate assignment: recursive $(MAKEFILE_LIST) at download time is
+# docs/manual/, not this package. Buildroot reads hashes from PKGDIR.
+HEXEDIT_HASH_FILE := $(dir $(lastword $(MAKEFILE_LIST)))hexedit.hash
 
 HEXEDIT_LICENSE = GPL-2.0+
 HEXEDIT_LICENSE_FILES = COPYING

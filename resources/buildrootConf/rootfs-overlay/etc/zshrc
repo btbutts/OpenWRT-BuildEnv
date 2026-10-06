@@ -1,2 +1,8 @@
 # /etc/zshrc: interactive zsh.
 alias vi=vim
+
+# 256-color 33 = #0087ff, or cyan on 16-color VTs. Do not export PS1.
+if [ -r /etc/prompt.sh ]; then
+    # shellcheck source=/etc/prompt.sh
+    . /etc/prompt.sh
+fi

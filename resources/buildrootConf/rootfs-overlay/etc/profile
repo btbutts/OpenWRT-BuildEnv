@@ -3,19 +3,12 @@
 # GNU tools in /usr/bin (vim, less) ahead of BusyBox applets in /bin.
 export PATH=/usr/bin:/usr/sbin:/bin:/sbin
 
-# Prompt: bash uses \[ \]; zsh uses %F / %f.
-if [ -n "${ZSH_VERSION:-}" ]; then
-    if [ "${USER:-}" = "root" ] || [ "$(id -u 2>/dev/null)" = "0" ]; then
-        PS1='%F{red}[%n@%m %1~]%f# '
-    else
-        PS1='[%n@%m %1~]$ '
-    fi
-elif [ "${USER:-}" = "root" ]; then
-    PS1='\[\e[1;31m\][\u@\h \W]#\[\e[0m\] '
-else
-    PS1='[\u@\h \W]$ '
+# Prompt is per-shell (see /etc/prompt.sh). Login bash sets PS1 here;
+# zsh sets PROMPT in /etc/zshrc; /root/.bashrc covers `bash` from zsh.
+if [ -n "${BASH_VERSION:-}" ] && [ -r /etc/prompt.sh ]; then
+    # shellcheck source=/etc/prompt.sh disable=1091
+    . /etc/prompt.sh
 fi
-export PS1
 
 export HOME="${HOME:-/root}"
 export EDITOR='/usr/bin/vim'

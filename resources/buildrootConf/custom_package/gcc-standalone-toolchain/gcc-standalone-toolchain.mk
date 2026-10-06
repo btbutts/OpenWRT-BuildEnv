@@ -69,7 +69,7 @@ GCC_STANDALONE_TOOLCHAIN_TARBALL = $(GCC_STANDALONE_TOOLCHAIN_SOURCE)
 GCC_STANDALONE_TOOLCHAIN_HASH_URL = $(GCC_STANDALONE_TOOLCHAIN_SITE)/$(patsubst %.tar.xz,%.sha256,$(patsubst %.tar.bz2,%.sha256,$(GCC_STANDALONE_TOOLCHAIN_TARBALL)))
 # Immediate assignment: recursive $(MAKEFILE_LIST) at download time is
 # docs/manual/, not this package. Buildroot reads hashes from PKGDIR.
-GCC_STANDALONE_TOOLCHAIN_HASH_FILE := $(TOPDIR)/package/gcc-standalone-toolchain/gcc-standalone-toolchain.hash
+GCC_STANDALONE_TOOLCHAIN_HASH_FILE := $(dir $(lastword $(MAKEFILE_LIST)))gcc-standalone-toolchain.hash
 GCC_STANDALONE_TOOLCHAIN_STRIP_COMPONENTS = 1
 # Prebuilt ELFs; skip per-package arch scan (thousands of python/.so/gcc files).
 GCC_STANDALONE_TOOLCHAIN_BIN_ARCH_EXCLUDE = opt/gcc-standalone-toolchain

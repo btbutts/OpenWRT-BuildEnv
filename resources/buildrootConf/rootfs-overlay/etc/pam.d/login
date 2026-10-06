@@ -1,0 +1,37 @@
+#%PAM-1.0
+# Enforce a minimal delay in case of failure (in microseconds).
+# (Replaces the `FAIL_DELAY' setting from login.defs)
+# Note that other modules may require another minimal delay. (for example,
+# to disable any delay, you should add the nodelay option to pam_unix)
+auth       optional     pam_faildelay.so  delay=3000000
+
+# Sets the loginuid process attribute
+session    required     pam_loginuid.so
+
+# Prints the message of the day upon successful login.
+# (Replaces the `MOTD_FILE' option in login.defs)
+# pam_exec writes /run/motd.dynamic from os-release + uname before
+# pam_motd displays it. type=open_session skips logout. noupdate is a
+# Debian pam_motd option; linux-pam 1.7.2 ignores unknown options.
+session    optional     pam_exec.so quiet type=open_session /usr/lib/openwrt-installer/generate-motd.sh
+session    optional     pam_motd.so motd=/run/motd.dynamic
+session    optional     pam_motd.so noupdate
+
+# This module parses environment configuration file(s)
+# and also allows you to use an extended config
+# file /etc/security/pam_env.conf.
+#
+# parsing /etc/environment needs "readenv=1"
+session       required   pam_env.so readenv=1
+
+# USB installer: empty BR2_TARGET_GENERIC_ROOT_PASSWD. pam_unix
+# rejects an empty shadow hash unless nullok is set.
+# No pam_securetty: console-getty's PAM_TTY is "console", which is
+# not GRUB console=tty1, and this image allows root on any local tty.
+auth       required     pam_unix.so nullok
+auth       required     pam_nologin.so
+account    required     pam_unix.so
+password   required     pam_unix.so nullok
+session    required     pam_unix.so
+session    optional     pam_lastlog.so
+session    optional     pam_systemd.so

@@ -142,17 +142,17 @@ class PatchMakefileTests(unittest.TestCase):
 
 
 class CustomPackageInstallTests(unittest.TestCase):
-    """Staged custom packages are copied and sourced under Custom Packages."""
+    """Custom packages stay in BR2_EXTERNAL; --customize writes custom-late.mk only."""
 
     def setUp(self) -> None:
-        """Build a tiny Buildroot tree with two staged custom packages."""
+        """Build a tiny Buildroot tree plus staged custom packages that must stay put."""
         self.td = Path(tempfile.mkdtemp())
         self.custom = self.td / "custom_package"
         self.br = self.td / "Buildroot-Builder"
         self.br.mkdir()
         shutil.copy(SAMPLE, self.br / "Makefile")
         (self.br / "Config.in").write_text(
-            "menu \"Target options\"\nendmenu\n",
+            'menu "Target options"\nendmenu\n',
             encoding="utf-8",
         )
         (self.br / "package").mkdir(parents=True, exist_ok=True)
@@ -162,33 +162,25 @@ class CustomPackageInstallTests(unittest.TestCase):
             "endmenu\n",
             encoding="utf-8",
         )
-        groff = self.custom / "groff"
-        groff.mkdir(parents=True)
-        (groff / "Config.in").write_text("config BR2_PACKAGE_GROFF\n\tbool \"groff\"\n")
-        (groff / "groff.mk").write_text("# groff.mk\n")
-        other = self.custom / "gcc-standalone-toolchain"
-        other.mkdir()
-        (other / "Config.in").write_text(
-            "config BR2_PACKAGE_GCC_STANDALONE_TOOLCHAIN\n\tbool \"gcc-standalone-toolchain\"\n"
-        )
-        (other / "gcc-standalone-toolchain.mk").write_text("# gcc-standalone-toolchain.mk\n")
-        hexedit = self.custom / "hexedit"
-        hexedit.mkdir()
-        (hexedit / "Config.in").write_text("config BR2_PACKAGE_HEXEDIT\n\tbool \"hexedit\"\n")
-        (hexedit / "hexedit.mk").write_text("# hexedit.mk\n")
-        sharutils = self.custom / "sharutils"
-        sharutils.mkdir()
-        (sharutils / "Config.in").write_text(
-            "config BR2_PACKAGE_SHARUTILS\n\tbool \"sharutils\"\n"
-        )
-        (sharutils / "sharutils.mk").write_text("# sharutils.mk\n")
+        for name, symbol in (
+            ("groff", "GROFF"),
+            ("gcc-standalone-toolchain", "GCC_STANDALONE_TOOLCHAIN"),
+            ("hexedit", "HEXEDIT"),
+            ("uutils-coreutils", "UUTILS_COREUTILS"),
+        ):
+            pkg = self.custom / name
+            pkg.mkdir(parents=True)
+            (pkg / "Config.in").write_text(
+                f"config BR2_PACKAGE_{symbol}\n\tbool \"{name}\"\n"
+            )
+            (pkg / f"{name}.mk").write_text(f"# {name}.mk\n")
 
     def tearDown(self) -> None:
         """Remove the temp tree."""
         shutil.rmtree(self.td)
 
     def test_default_custom_package_dir_uses_conf_env(self) -> None:
-        """BUILDROOT_CONF_DIR/custom_package is the staged package tree."""
+        """BUILDROOT_CONF_DIR/custom_package is the br2-external tree."""
         original = os.environ.get("BUILDROOT_CONF_DIR")
         try:
             os.environ["BUILDROOT_CONF_DIR"] = "/tmp/conf-dir/"
@@ -202,54 +194,25 @@ class CustomPackageInstallTests(unittest.TestCase):
             else:
                 os.environ["BUILDROOT_CONF_DIR"] = original
 
-    def test_install_copies_and_sources_each_package(self) -> None:
-        """Packages land under package/<name>/ and in Target packages → Custom Packages."""
+    def test_does_not_copy_packages_into_buildroot(self) -> None:
+        """--customize leaves package/<name>/ alone; keep-docs and late-mk still land."""
+        pkg_config_before = (self.br / "package" / "Config.in").read_text()
         cb.customize_buildroot(self.br, self.custom)
-        groff_dest = self.br / "package" / "groff"
-        gcc_dest = self.br / "package" / "gcc-standalone-toolchain"
-        hexedit_dest = self.br / "package" / "hexedit"
-        sharutils_dest = self.br / "package" / "sharutils"
-        self.assertTrue((groff_dest / "Config.in").is_file())
-        self.assertTrue((groff_dest / "groff.mk").is_file())
-        self.assertTrue((gcc_dest / "Config.in").is_file())
-        self.assertTrue((gcc_dest / "gcc-standalone-toolchain.mk").is_file())
-        self.assertTrue((hexedit_dest / "Config.in").is_file())
-        self.assertTrue((hexedit_dest / "hexedit.mk").is_file())
-        self.assertTrue((sharutils_dest / "Config.in").is_file())
-        self.assertTrue((sharutils_dest / "sharutils.mk").is_file())
-        self.assertEqual((groff_dest / "groff.mk").read_text(), "# groff.mk\n")
+        self.assertFalse((self.br / "package" / "groff").exists())
+        self.assertFalse((self.br / "package" / "uutils-coreutils").exists())
+        self.assertFalse((self.br / "package" / "hexedit").exists())
         config = (self.br / "Config.in").read_text()
         self.assertIn("config BR2_KEEP_MAN_PAGES_DOCS", config)
-        self.assertNotIn('source "package/gcc-standalone-toolchain/Config.in"', config)
         self.assertNotIn('source "package/groff/Config.in"', config)
-        self.assertNotIn('source "package/hexedit/Config.in"', config)
-        self.assertNotIn('source "package/sharutils/Config.in"', config)
         pkg_config = (self.br / "package" / "Config.in").read_text()
-        self.assertIn('menu "Custom Packages"', pkg_config)
-        self.assertIn('\tsource "package/gcc-standalone-toolchain/Config.in"', pkg_config)
-        self.assertIn('\tsource "package/groff/Config.in"', pkg_config)
-        self.assertIn('\tsource "package/hexedit/Config.in"', pkg_config)
-        self.assertIn('\tsource "package/sharutils/Config.in"', pkg_config)
-        gcc_at = pkg_config.index('source "package/gcc-standalone-toolchain/Config.in"')
-        groff_at = pkg_config.index('source "package/groff/Config.in"')
-        hexedit_at = pkg_config.index('source "package/hexedit/Config.in"')
-        sharutils_at = pkg_config.index('source "package/sharutils/Config.in"')
-        self.assertLess(gcc_at, groff_at)
-        self.assertLess(groff_at, hexedit_at)
-        self.assertLess(hexedit_at, sharutils_at)
-        custom_menu = pkg_config.index('menu "Custom Packages"')
-        custom_end = pkg_config.index("endmenu", custom_menu)
-        target_end = pkg_config.rindex("endmenu")
-        self.assertLess(custom_end, target_end)
+        self.assertEqual(pkg_config, pkg_config_before)
+        self.assertNotIn('menu "Custom Packages"', pkg_config)
         late = (self.br / "package" / "custom-late.mk").read_text()
         self.assertIn("LATE_CUSTOM_PACKAGES += gcc-standalone-toolchain", late)
         self.assertIn("LATE_CUSTOM_PACKAGES += groff", late)
         self.assertIn("LATE_CUSTOM_PACKAGES += hexedit", late)
-        self.assertIn("LATE_CUSTOM_PACKAGES += sharutils", late)
+        self.assertNotIn("LATE_CUSTOM_PACKAGES += uutils-coreutils", late)
         self.assertIn("ifeq ($(BR2_PACKAGE_GCC_STANDALONE_TOOLCHAIN),y)", late)
-        self.assertIn("ifeq ($(BR2_PACKAGE_HEXEDIT),y)", late)
-        self.assertIn("ifeq ($(BR2_PACKAGE_SHARUTILS),y)", late)
-        self.assertIn("$(eval $(p)-install:", late)
         self.assertIn(
             "gcc-standalone-toolchain-install: "
             "$(filter-out gcc-standalone-toolchain,$(LATE_CUSTOM_PACKAGES))",
@@ -260,28 +223,81 @@ class CustomPackageInstallTests(unittest.TestCase):
             cb.kconfig_package_symbol("gcc-standalone-toolchain"),
             "BR2_PACKAGE_GCC_STANDALONE_TOOLCHAIN",
         )
-
-    def test_strips_stale_root_config_sources(self) -> None:
-        """Top-level Config.in source lines from older customize runs are removed."""
-        (self.br / "Config.in").write_text(
-            'menu "Target options"\n'
-            'source "package/groff/Config.in"\n'
-            "endmenu\n",
-            encoding="utf-8",
+        self.assertEqual(
+            cb.kconfig_package_symbol("uutils-coreutils"),
+            "BR2_PACKAGE_UUTILS_COREUTILS",
         )
-        cb.customize_buildroot(self.br, self.custom)
-        root = (self.br / "Config.in").read_text()
-        self.assertNotIn('source "package/groff/Config.in"', root)
-        self.assertIn("config BR2_KEEP_MAN_PAGES_DOCS", root)
+        self.assertIn("uutils-coreutils", cb.LATE_CUSTOM_SKIP_PACKAGES)
 
-    def test_install_is_idempotent(self) -> None:
-        """Re-running customize does not duplicate the Custom Packages menu."""
+    def test_customize_is_idempotent(self) -> None:
+        """
+        Re-running customize does not duplicate keep-docs, late-mk include, or package/Config.in.
+        """
         cb.customize_buildroot(self.br, self.custom)
-        once = (self.br / "package" / "Config.in").read_text()
+        once_root = (self.br / "Config.in").read_text()
+        once_pkg = (self.br / "package" / "Config.in").read_text()
+        once_make = (self.br / "Makefile").read_text()
+        once_late = (self.br / "package" / "custom-late.mk").read_text()
         cb.customize_buildroot(self.br, self.custom)
-        self.assertEqual(once, (self.br / "package" / "Config.in").read_text())
-        self.assertEqual(once.count('menu "Custom Packages"'), 1)
-        self.assertEqual(once.count('source "package/groff/Config.in"'), 1)
+        self.assertEqual(once_root, (self.br / "Config.in").read_text())
+        self.assertEqual(once_pkg, (self.br / "package" / "Config.in").read_text())
+        self.assertEqual(once_make, (self.br / "Makefile").read_text())
+        self.assertEqual(once_late, (self.br / "package" / "custom-late.mk").read_text())
+        self.assertEqual(once_root.count("config BR2_KEEP_MAN_PAGES_DOCS"), 1)
+        self.assertEqual(once_make.count("include package/custom-late.mk"), 1)
+
+
+class Br2ExternalLayoutTests(unittest.TestCase):
+    """The repo custom_package tree is a valid br2-external layout."""
+
+    ROOT = Path(__file__).resolve().parent / "buildrootConf" / "custom_package"
+
+    def test_required_files_exist(self) -> None:
+        """external.desc, Config.in, and external.mk are at the tree root."""
+        self.assertTrue((self.ROOT / "external.desc").is_file())
+        self.assertTrue((self.ROOT / "Config.in").is_file())
+        self.assertTrue((self.ROOT / "external.mk").is_file())
+        desc = (self.ROOT / "external.desc").read_text()
+        self.assertIn("name: OPENWRT_INSTALLER", desc)
+
+    def test_config_in_sources_each_package(self) -> None:
+        """Root Config.in sources every package Config.in via BR2_EXTERNAL path."""
+        text = (self.ROOT / "Config.in").read_text()
+        self.assertIn('menu "Custom Packages"', text)
+        for name in (
+            "gcc-standalone-toolchain",
+            "groff",
+            "hexedit",
+            "sharutils",
+            "uutils-coreutils",
+        ):
+            self.assertIn(
+                f'source "$BR2_EXTERNAL_OPENWRT_INSTALLER_PATH/{name}/Config.in"',
+                text,
+            )
+            self.assertTrue((self.ROOT / name / "Config.in").is_file())
+            self.assertTrue((self.ROOT / name / f"{name}.mk").is_file())
+
+    def test_external_mk_includes_package_makefiles(self) -> None:
+        """external.mk includes */*.mk; late install stays in custom-late.mk."""
+        text = (self.ROOT / "external.mk").read_text()
+        self.assertIn(
+            "include $(sort $(wildcard $(BR2_EXTERNAL_OPENWRT_INSTALLER_PATH)/*/*.mk))",
+            text,
+        )
+        self.assertNotIn("gcc-standalone-toolchain-install:", text)
+        self.assertNotIn("LATE_CUSTOM_PACKAGES", text)
+
+    def test_uutils_conflicts_with_gnu_coreutils(self) -> None:
+        """uutils Kconfig hides when GNU coreutils is enabled, and does not need SHOW_OTHERS."""
+        text = (self.ROOT / "uutils-coreutils" / "Config.in").read_text()
+        self.assertIn("config BR2_PACKAGE_UUTILS_COREUTILS", text)
+        self.assertIn("depends on !BR2_PACKAGE_COREUTILS", text)
+        self.assertNotIn("BR2_PACKAGE_BUSYBOX_SHOW_OTHERS", text)
+        self.assertIn('default "0.12.0"', text)
+        mk = (self.ROOT / "uutils-coreutils" / "uutils-coreutils.mk").read_text()
+        self.assertIn("UUTILS_COREUTILS_CARGO_PROFILE = release", mk)
+        self.assertNotIn("release-small", mk)
 
 
 class PatchLinuxToolsTests(unittest.TestCase):
@@ -366,10 +382,10 @@ class PatchOpenvmtoolsTests(unittest.TestCase):
         (self.pkg / "0014-CVE-2025-22247-1100-1225-VGAuth-updates.patch").write_text(
             "unrelated\n"
         )
+        expected = self.pkg / "0015-c23-MXUserTryAcquireForceFail.patch"
         dest = cb.patch_openvmtools(self.pkg)
-        self.assertIsNotNone(dest)
-        self.assertEqual(dest.name, "0015-c23-MXUserTryAcquireForceFail.patch")
-        text = dest.read_text()
+        self.assertEqual(dest, expected)
+        text = expected.read_text()
         self.assertIn("-" + cb.OPENVMTOOLS_C23_OLD, text)
         self.assertIn("+" + cb.OPENVMTOOLS_C23_NEW, text)
         self.assertIn("diff --git a/lib/lock/ul.c b/lib/lock/ul.c", text)

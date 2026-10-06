@@ -11,7 +11,9 @@ endif
 
 SHARUTILS_SOURCE = sharutils-$(SHARUTILS_VERSION).tar.gz
 SHARUTILS_SITE = $(BR2_GNU_MIRROR)/sharutils
-SHARUTILS_HASH_FILE := $(TOPDIR)/package/sharutils/sharutils.hash
+# Immediate assignment: recursive $(MAKEFILE_LIST) at download time is
+# docs/manual/, not this package. Buildroot reads hashes from PKGDIR.
+SHARUTILS_HASH_FILE := $(dir $(lastword $(MAKEFILE_LIST)))sharutils.hash
 
 SHARUTILS_LICENSE = GPLv3+
 SHARUTILS_LICENSE_FILES = COPYING

@@ -6,6 +6,11 @@ set -e
 : "${BUILDROOT_OUTPUT_DIR:=/builder/workspace/output/buildroot}"
 : "${BUILDROOT_CONF_DIR:=/builder/buildrootConf}"
 : "${WORKSPACE_DIR:=/builder/workspace}"
+# br2-external tree. Make variable, not Kconfig. First make writes
+# output/.br2-external.mk; still export so a wiped tree's first
+# installer_defconfig sees custom packages.
+: "${BR2_EXTERNAL:=${BUILDROOT_CONF_DIR%/}/custom_package}"
+export BR2_EXTERNAL
 
 BUILDROOT_OVERLAY_DIR="${BUILDROOT_CONF_DIR%/}/rootfs-overlay"
 BUILDROOT_CCACHE_DIR="${BUILDROOT_BUILDER_DIR%/}/.buildroot-ccache"
@@ -142,6 +147,7 @@ prepare_overlay() {
     # /usr/sbin -> bin.
     mkdir -p "${BUILDROOT_OVERLAY_DIR}/usr/bin" \
         "${BUILDROOT_OVERLAY_DIR}/usr/lib/installer" \
+        "${BUILDROOT_OVERLAY_DIR}/usr/lib/openwrt-installer" \
         "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/multi-user.target.wants" \
         "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/getty.target.wants" \
         "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/console-getty.service.d" \
@@ -189,13 +195,16 @@ prepare_overlay() {
         ["${BUILDROOT_OVERLAY_DIR}/usr/bin/installer-bootlog.sh"]=""
         ["${BUILDROOT_OVERLAY_DIR}/usr/lib/installer/media.sh"]=""
         ["${BUILDROOT_OVERLAY_DIR}/usr/lib/installer/bootlog-wrapper.sh"]=""
-        ["${BUILDROOT_CONF_DIR%/}/inittab/append.sh"]=""
+        ["${BUILDROOT_OVERLAY_DIR}/usr/lib/openwrt-installer/generate-motd.sh"]=""
+        ["${BUILDROOT_CONF_DIR%/}/post_build_script/append.sh"]=""
+        ["${BUILDROOT_CONF_DIR%/}/post_build_script/set_os_release.sh"]=""
     )
 
     # Sourced by login shells; the executable bit is unused, but keep them
     # readable. zsh does not read /etc/profile unless zprofile/zshenv do.
     for sourced in \
         "${BUILDROOT_OVERLAY_DIR}/etc/profile" \
+        "${BUILDROOT_OVERLAY_DIR}/etc/prompt.sh" \
         "${BUILDROOT_OVERLAY_DIR}/etc/zprofile" \
         "${BUILDROOT_OVERLAY_DIR}/etc/zshenv" \
         "${BUILDROOT_OVERLAY_DIR}/etc/zshrc"
@@ -242,6 +251,18 @@ EOF
 if [[ "${RESUME}" -eq 1 ]]; then
     printf '%s\n' "--> Resuming compilation via --resume argument:"
     prepare_overlay
+    if [[ "${RM_TARGET_FINALIZE}" -eq 1 ]]; then
+        printf '\t%s\n' "--> Cleaning up target-finalize artifacts..."
+        rm -rf "${BUILDROOT_BUILDER_DIR%/}/output/target" \
+            "${BUILDROOT_BUILDER_DIR%/}/output/staging" \
+            "${BUILDROOT_BUILDER_DIR%/}/output/images"
+    else
+        # Overlay is copied at target-finalize. Make skips the cpio when
+        # output/images/rootfs.cpio* is already current, so drop those
+        # so PAM/getty/wizard overlay edits land in the initramfs.
+        rm -f "${BUILDROOT_BUILDER_DIR%/}/output/images/rootfs.cpio" \
+            "${BUILDROOT_BUILDER_DIR%/}/output/images/rootfs.cpio.zst"
+    fi
     run_compile_now
     run_move_images
     exit 0
@@ -250,8 +271,8 @@ fi
 # When a dirclean command is requested for a
 # specific app, handle it here and then exit
 if [ -n "${BR_APP}" ]; then
-    BR_APP_PATH=$(find Buildroot-Builder/package/ -wholename "*/${BR_APP}" -type d 2>/dev/null)
-    if [ -n "${BR_APP_PATH}" ] && [ "${BR_APP_PATH#Buildroot-Builder/package/}" = "${BR_APP}" ]; then
+    if [ -d "${BUILDROOT_BUILDER_DIR%/}/package/${BR_APP}" ] || \
+       [ -d "${BR2_EXTERNAL%/}/${BR_APP}" ]; then
         cd "${BUILDROOT_BUILDER_DIR%/}"
         printf '%s%s\n' "Running dirclean and build for package: " "${BR_APP}"
         make "${BR_APP}-dirclean"
