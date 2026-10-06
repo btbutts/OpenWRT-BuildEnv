@@ -35,6 +35,26 @@ while [ $# -gt 0 ]; do
         --copy-only) COPY_ONLY=1; shift ;;
         --target-finalize-clean) RM_TARGET_FINALIZE=1; shift ;;
         --resume) RESUME=1; shift ;;
+        --set-mirrors)
+            if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
+                if [ -n "$ZSH_VERSION" ]; then
+                    eval 'emulate bash -c "BR_MIRRORS=\($2\)"'
+                else
+                    eval "BR_MIRRORS=($2)"
+                fi
+                shift 2
+            else
+                printf '%s\n%s\n\t%s%s%s\n\t%s%s\n' \
+                    "Error: --set-mirrors requires a single-quoted mirror assignment string!" \
+                    "Examples:" \
+                    "--set-mirrors" \
+                    " 'BR2_GNU_MIRROR=\"https://mirrors.ocf.berkeley.edu/gnu\"" \
+                    " BR2_KERNEL_MIRROR=\"https://cdn.kernel.org/pub'\"" \
+                    "--set-mirrors" \
+                    " 'BR2_GNU_MIRROR=\"https://mirrors.ocf.berkeley.edu/gnu\"'" >&2
+                exit 1
+            fi
+            ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -129,7 +149,15 @@ fi
 run_compile_now() {
     cd "${BUILDROOT_BUILDER_DIR%/}"
     echo "--> Compiling specialized cross-toolchain and kernel utilities..."
-    make -j"$(nproc)"
+    if [ ${#BR_MIRRORS[@]} -gt 0 ]; then
+        local mirror_list
+        mirror_list=$(printf "%s " "${BR_MIRRORS[@]}")
+        mirror_list="${mirror_list% }"
+        printf '%s\n\t%s\n' "--> Using custom mirror overide(s):" "$mirror_list"
+        make "${BR_MIRRORS[@]}" -j"$(nproc)"
+    else
+        make -j"$(nproc)"
+    fi
 }
 
 run_move_images() {
