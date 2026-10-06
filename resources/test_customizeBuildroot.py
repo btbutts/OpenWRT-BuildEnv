@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for customizeBuildroot.py Makefile, Config.in, and custom-package edits."""
+"""Tests for customizeBuildroot Makefile, Config.in, and custom-package edits."""
 
 from __future__ import annotations
 
@@ -426,6 +426,566 @@ class PatchOpenvmtoolsTests(unittest.TestCase):
         written = ovm / "0015-c23-MXUserTryAcquireForceFail.patch"
         self.assertTrue(written.is_file())
         self.assertIn(cb.OPENVMTOOLS_C23_NEW, written.read_text())
+
+
+# 2026.08 snippets: latest kernel/headers stop at 7.1.13.
+_KERNEL_HEADERS_HOST_2026_08 = """\
+choice
+	prompt "Kernel Headers"
+	default BR2_KERNEL_HEADERS_AS_KERNEL if BR2_LINUX_KERNEL
+	default BR2_KERNEL_HEADERS_7_1
+	help
+	  Select the kernel version to get headers from.
+
+config BR2_KERNEL_HEADERS_AS_KERNEL
+	bool "Same as kernel being built"
+	depends on BR2_LINUX_KERNEL
+	select BR2_KERNEL_HEADERS_LATEST if BR2_LINUX_KERNEL_LATEST_VERSION
+
+config BR2_KERNEL_HEADERS_7_1
+	bool "Linux 7.1.x kernel headers"
+	select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1
+	select BR2_KERNEL_HEADERS_LATEST
+
+config BR2_KERNEL_HEADERS_VERSION
+	bool "Manually specified Linux version"
+endchoice
+
+config BR2_KERNEL_HEADERS_LATEST
+	bool
+
+choice
+	bool "Custom kernel headers series"
+	default BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_REALLY_OLD
+
+config BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_7_1
+	bool "7.1.x or later"
+	select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1
+
+config BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_7_0
+	bool "7.0.x"
+	select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_0
+
+endchoice
+
+config BR2_DEFAULT_KERNEL_HEADERS
+	string
+	default "7.1.13"	if BR2_KERNEL_HEADERS_7_1
+	default BR2_DEFAULT_KERNEL_VERSION if BR2_KERNEL_HEADERS_VERSION
+"""
+
+_TOOLCHAIN_CONFIG_2026_08 = """\
+config BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_0
+	bool
+	select BR2_TOOLCHAIN_HEADERS_AT_LEAST_6_19
+
+config BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1
+	bool
+	select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_0
+	select BR2_TOOLCHAIN_HEADERS_LATEST
+
+config BR2_TOOLCHAIN_HEADERS_LATEST
+	bool
+
+config BR2_TOOLCHAIN_HEADERS_AT_LEAST
+	string
+	default "7.1" if BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1
+	default "7.0" if BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_0
+	default "6.19" if BR2_TOOLCHAIN_HEADERS_AT_LEAST_6_19
+"""
+
+_LINUX_CONFIG_2026_08 = """\
+choice
+	prompt "Kernel version"
+
+config BR2_LINUX_KERNEL_LATEST_VERSION
+	bool "Latest version (7.1)"
+	select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1 if BR2_KERNEL_HEADERS_AS_KERNEL
+
+config BR2_LINUX_KERNEL_CUSTOM_VERSION
+	bool "Custom version"
+
+endchoice
+
+config BR2_LINUX_KERNEL_VERSION
+	string
+	default "7.1.13" if BR2_LINUX_KERNEL_LATEST_VERSION
+	default BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE \\
+		if BR2_LINUX_KERNEL_CUSTOM_VERSION
+"""
+
+
+class UpdateKernelSupportTests(unittest.TestCase):
+    """--update-kernel-support adds 7.2.8 as Buildroot 2026.08 latest."""
+
+    def setUp(self) -> None:
+        """Minimal 2026.08 linux/headers/toolchain Kconfig tree."""
+        self.td = Path(tempfile.mkdtemp())
+        self.br = self.td / "Buildroot-Builder"
+        headers = self.br / "package" / "linux-headers"
+        linux = self.br / "linux"
+        toolchain = self.br / "toolchain"
+        headers.mkdir(parents=True)
+        linux.mkdir(parents=True)
+        toolchain.mkdir(parents=True)
+        (self.br / "Config.in").write_text('menu "x"\nendmenu\n')
+        shutil.copy(SAMPLE, self.br / "Makefile")
+        (self.br / "package" / "Config.in").write_text(
+            'menu "Target packages"\nendmenu\n'
+        )
+        (headers / "Config.in.host").write_text(_KERNEL_HEADERS_HOST_2026_08)
+        (toolchain / "Config.in").write_text(_TOOLCHAIN_CONFIG_2026_08)
+        (linux / "Config.in").write_text(_LINUX_CONFIG_2026_08)
+        (linux / "from-6.17").mkdir()
+        (linux / "7.1.13").symlink_to("from-6.17")
+        (headers / "7.1.13").symlink_to("../../linux/from-6.17")
+
+    def tearDown(self) -> None:
+        """Remove the temp tree."""
+        shutil.rmtree(self.td)
+
+    def _apply(self) -> None:
+        """Run the kernel-support updater against the fixture tree."""
+        cb.update_kernel_support(self.br)
+
+    def test_headers_7_2_is_latest_and_7_1_is_kept(self) -> None:
+        """7.2.x headers take LATEST; 7.1.x remains selectable."""
+        self._apply()
+        text = (self.br / "package" / "linux-headers" / "Config.in.host").read_text()
+        self.assertIn('bool "Linux 7.2.x kernel headers"', text)
+        self.assertIn("select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2", text)
+        self.assertRegex(
+            text,
+            r"config BR2_KERNEL_HEADERS_7_2\n"
+            r'\tbool "Linux 7.2.x kernel headers"\n'
+            r"\tselect BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2\n"
+            r"\tselect BR2_KERNEL_HEADERS_LATEST\n",
+        )
+        self.assertNotRegex(
+            text,
+            r"config BR2_KERNEL_HEADERS_7_1\n"
+            r'\tbool "Linux 7.1.x kernel headers"\n'
+            r"\tselect BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1\n"
+            r"\tselect BR2_KERNEL_HEADERS_LATEST\n",
+        )
+        self.assertIn("\tdefault BR2_KERNEL_HEADERS_7_2\n", text)
+        self.assertIn('\tdefault "7.2.8"\tif BR2_KERNEL_HEADERS_7_2\n', text)
+        self.assertIn('bool "7.2.x or later"', text)
+        self.assertIn('bool "7.1.x"', text)
+        self.assertNotIn('bool "7.1.x or later"', text)
+
+    def test_toolchain_at_least_7_2_is_latest(self) -> None:
+        """AT_LEAST_7_2 selects 7_1 and LATEST; the string default prefers 7.2."""
+        self._apply()
+        text = (self.br / "toolchain" / "Config.in").read_text()
+        self.assertRegex(
+            text,
+            r"config BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2\n"
+            r"\tbool\n"
+            r"\tselect BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1\n"
+            r"\tselect BR2_TOOLCHAIN_HEADERS_LATEST\n",
+        )
+        self.assertNotRegex(
+            text,
+            r"config BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1\n"
+            r"\tbool\n"
+            r"\tselect BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_0\n"
+            r"\tselect BR2_TOOLCHAIN_HEADERS_LATEST\n",
+        )
+        self.assertRegex(
+            text,
+            r"config BR2_TOOLCHAIN_HEADERS_AT_LEAST\n"
+            r"\tstring\n"
+            r'\tdefault "7.2" if BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2\n'
+            r'\tdefault "7.1" if BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1\n',
+        )
+
+    def test_latest_kernel_version_is_7_2_8(self) -> None:
+        """LATEST_VERSION prompt, AT_LEAST select, and VERSION default become 7.2.8."""
+        self._apply()
+        text = (self.br / "linux" / "Config.in").read_text()
+        self.assertIn('bool "Latest version (7.2)"', text)
+        self.assertIn(
+            "select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2 "
+            "if BR2_KERNEL_HEADERS_AS_KERNEL",
+            text,
+        )
+        self.assertNotIn('bool "Latest version (7.1)"', text)
+        self.assertNotIn(
+            "select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1 "
+            "if BR2_KERNEL_HEADERS_AS_KERNEL",
+            text,
+        )
+        self.assertIn('default "7.2.8" if BR2_LINUX_KERNEL_LATEST_VERSION', text)
+        self.assertNotIn('default "7.1.13" if BR2_LINUX_KERNEL_LATEST_VERSION', text)
+
+    def test_version_patch_dirs_follow_7_1_13(self) -> None:
+        """7.2.8 reuses the same from-6.17 patch dir as 7.1.13."""
+        self._apply()
+        linux_link = self.br / "linux" / "7.2.8"
+        headers_link = self.br / "package" / "linux-headers" / "7.2.8"
+        self.assertTrue(linux_link.is_symlink())
+        self.assertEqual(linux_link.readlink().as_posix(), "from-6.17")
+        self.assertTrue(headers_link.is_symlink())
+        self.assertEqual(
+            headers_link.readlink().as_posix(),
+            "../../linux/from-6.17",
+        )
+
+    def test_idempotent(self) -> None:
+        """A second --update-kernel-support leaves the tree unchanged."""
+        self._apply()
+        first_headers = (
+            self.br / "package" / "linux-headers" / "Config.in.host"
+        ).read_text()
+        first_toolchain = (self.br / "toolchain" / "Config.in").read_text()
+        first_linux = (self.br / "linux" / "Config.in").read_text()
+        self._apply()
+        self.assertEqual(
+            (self.br / "package" / "linux-headers" / "Config.in.host").read_text(),
+            first_headers,
+        )
+        self.assertEqual(
+            (self.br / "toolchain" / "Config.in").read_text(),
+            first_toolchain,
+        )
+        self.assertEqual((self.br / "linux" / "Config.in").read_text(), first_linux)
+        self.assertEqual(first_headers.count("config BR2_KERNEL_HEADERS_7_2"), 1)
+        self.assertEqual(
+            first_toolchain.count("config BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2"),
+            1,
+        )
+
+    def test_customize_does_not_add_7_2(self) -> None:
+        """--customize must not bump kernel/header latest to 7.2."""
+        custom = self.td / "custom"
+        groff = custom / "groff"
+        groff.mkdir(parents=True)
+        (groff / "Config.in").write_text('config BR2_PACKAGE_GROFF\n\tbool "g"\n')
+        cb.customize_buildroot(self.br, custom)
+        headers = (self.br / "package" / "linux-headers" / "Config.in.host").read_text()
+        linux = (self.br / "linux" / "Config.in").read_text()
+        toolchain = (self.br / "toolchain" / "Config.in").read_text()
+        self.assertNotIn("BR2_KERNEL_HEADERS_7_2", headers)
+        self.assertNotIn("BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2", toolchain)
+        self.assertIn('default "7.1.13" if BR2_LINUX_KERNEL_LATEST_VERSION', linux)
+        self.assertIn("config BR2_KEEP_MAN_PAGES_DOCS", (self.br / "Config.in").read_text())
+
+    def test_cli_update_kernel_support_skips_customize(self) -> None:
+        """python customizeBuildroot/main.py --update-kernel-support is kernel-only."""
+        rc = cb.main(
+            ["--br-path", str(self.br), "--update-kernel-support"]
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn(
+            "config BR2_KERNEL_HEADERS_7_2",
+            (self.br / "package" / "linux-headers" / "Config.in.host").read_text(),
+        )
+        self.assertNotIn(
+            "config BR2_KEEP_MAN_PAGES_DOCS",
+            (self.br / "Config.in").read_text(),
+        )
+        self.assertFalse((self.br / "package" / "custom-late.mk").exists())
+
+    def test_getbuildroot_flag_is_exclusive(self) -> None:
+        """getBuildroot.sh documents --update-kernel-support as a lone argument."""
+        script = Path(__file__).with_name("getBuildroot.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("--update-kernel-support)", script)
+        self.assertIn("must be used by itself", script)
+        self.assertIn("--update-kernel-support", script)
+        self.assertIn("customizeBuildroot/main.py", script)
+        self.assertIn('PYTHONPATH="${BUILDER_ROOT_DIR%/}', script)
+
+
+_SYSTEMD_CONFIG_2026_08 = """\
+menuconfig BR2_PACKAGE_SYSTEMD
+	bool "systemd"
+
+if BR2_PACKAGE_SYSTEMD
+
+config BR2_PACKAGE_PROVIDES_LIBUDEV
+	default "systemd"
+
+endif
+"""
+
+_SYSTEMD_MK_2026_08 = """\
+################################################################################
+#
+# systemd
+#
+################################################################################
+
+SYSTEMD_VERSION = 258.7
+SYSTEMD_SITE = $(call github,systemd,systemd,v$(SYSTEMD_VERSION))
+
+SYSTEMD_CONF_OPTS += \\
+	-Dsysvinit-path= \\
+	-Dsysvrcnd-path=
+
+HOST_SYSTEMD_CONF_OPTS = \\
+	-Dsysvinit-path='' \\
+	-Dlibidn=disabled \\
+	-Dlibiptc=disabled
+
+$(eval $(meson-package))
+$(eval $(host-meson-package))
+"""
+
+_LINUX_PAM_CONFIG_2026_08 = """\
+config BR2_PACKAGE_LINUX_PAM
+	bool "linux-pam"
+
+if BR2_PACKAGE_LINUX_PAM
+
+config BR2_PACKAGE_LINUX_PAM_LASTLOG
+	bool "pam_lastlog.so"
+
+endif
+"""
+
+_LINUX_PAM_MK_2026_08 = """\
+################################################################################
+#
+# linux-pam
+#
+################################################################################
+
+LINUX_PAM_VERSION = 1.7.2
+LINUX_PAM_SOURCE = Linux-PAM-$(LINUX_PAM_VERSION).tar.xz
+LINUX_PAM_SITE = https://github.com/linux-pam/linux-pam/releases/download/v$(LINUX_PAM_VERSION)
+
+$(eval $(meson-package))
+"""
+
+
+class PackageVersionOverrideTests(unittest.TestCase):
+    """--customize adds optional systemd and linux-pam version overrides."""
+
+    def setUp(self) -> None:
+        """Minimal 2026.08 systemd and linux-pam package files."""
+        self.td = Path(tempfile.mkdtemp())
+        self.br = self.td / "Buildroot-Builder"
+        systemd = self.br / "package" / "systemd"
+        pam = self.br / "package" / "linux-pam"
+        systemd.mkdir(parents=True)
+        pam.mkdir(parents=True)
+        (self.br / "Config.in").write_text('menu "x"\nendmenu\n')
+        shutil.copy(SAMPLE, self.br / "Makefile")
+        (self.br / "package" / "Config.in").write_text(
+            'menu "Target packages"\nendmenu\n'
+        )
+        (systemd / "Config.in").write_text(_SYSTEMD_CONFIG_2026_08)
+        (systemd / "systemd.mk").write_text(_SYSTEMD_MK_2026_08)
+        (pam / "Config.in").write_text(_LINUX_PAM_CONFIG_2026_08)
+        (pam / "linux-pam.mk").write_text(_LINUX_PAM_MK_2026_08)
+        self.custom = self.td / "custom"
+        groff = self.custom / "groff"
+        groff.mkdir(parents=True)
+        (groff / "Config.in").write_text('config BR2_PACKAGE_GROFF\n\tbool "g"\n')
+
+    def tearDown(self) -> None:
+        """Remove the temp tree."""
+        shutil.rmtree(self.td)
+
+    def _apply(self) -> None:
+        """Run --customize against the fixture tree."""
+        cb.customize_buildroot(self.br, self.custom)
+
+    def test_systemd_override_is_empty_by_default(self) -> None:
+        """Kconfig string exists; packaged SYSTEMD_VERSION stays 258.7."""
+        self._apply()
+        cfg = (self.br / "package" / "systemd" / "Config.in").read_text()
+        mk = (self.br / "package" / "systemd" / "systemd.mk").read_text()
+        self.assertIn("config BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE", cfg)
+        self.assertIn('\tdefault ""', cfg)
+        self.assertIn("SYSTEMD_VERSION = 258.7", mk)
+        self.assertIn("SYSTEMD_VERSION_STOCK := $(SYSTEMD_VERSION)", mk)
+        self.assertIn(
+            "SYSTEMD_VERSION = $(call qstrip,"
+            "$(BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE))",
+            mk,
+        )
+        self.assertNotIn("BR_NO_CHECK_HASH_FOR", mk)
+        self.assertIn("define SYSTEMD_FETCH_HASH", mk)
+        self.assertIn("SYSTEMD_PRE_DOWNLOAD_HOOKS += SYSTEMD_FETCH_HASH", mk)
+        self.assertIn("HOST_SYSTEMD_PRE_DOWNLOAD_HOOKS += SYSTEMD_FETCH_HASH", mk)
+        self.assertIn(
+            "SYSTEMD_HASH_FILE := $(dir $(lastword $(MAKEFILE_LIST)))systemd.hash",
+            mk,
+        )
+        self.assertIn('$$1 == "sha256" && $$NF == f', mk)
+        self.assertIn("$(SYSTEMD_SITE)/$(SYSTEMD_SOURCE)", mk)
+        override_if = mk.index(
+            "ifneq ($(call qstrip,$(BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE)),)"
+        )
+        fetch_hook = mk.index("SYSTEMD_PRE_DOWNLOAD_HOOKS += SYSTEMD_FETCH_HASH")
+        meson_eval = mk.index("$(eval $(meson-package))")
+        self.assertLess(override_if, fetch_hook)
+        self.assertLess(fetch_hook, meson_eval)
+        self.assertIn("-Dsysvinit-path=", mk)
+        self.assertIn("-Dlibidn=disabled", mk)
+        stock = mk.index("SYSTEMD_VERSION = 258.7")
+        override = mk.index("SYSTEMD_VERSION = $(call qstrip")
+        self.assertLess(stock, override)
+
+    def test_systemd_override_strips_removed_meson_options(self) -> None:
+        """A non-stock version drops SysV/libidn/libiptc meson -D flags."""
+        self._apply()
+        mk = (self.br / "package" / "systemd" / "systemd.mk").read_text()
+        self.assertIn("ifneq ($(SYSTEMD_VERSION),$(SYSTEMD_VERSION_STOCK))", mk)
+        self.assertIn("-Dsysvinit-path= -Dsysvrcnd-path=", mk)
+        self.assertIn("-Dlibidn=enabled -Dlibidn=disabled", mk)
+        self.assertIn("-Dlibiptc=enabled -Dlibiptc=disabled", mk)
+
+    def test_linux_pam_override_is_empty_by_default(self) -> None:
+        """Kconfig string exists; packaged LINUX_PAM_VERSION stays 1.7.2."""
+        self._apply()
+        cfg = (self.br / "package" / "linux-pam" / "Config.in").read_text()
+        mk = (self.br / "package" / "linux-pam" / "linux-pam.mk").read_text()
+        self.assertIn("config BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE", cfg)
+        self.assertIn('\tdefault ""', cfg)
+        self.assertIn("LINUX_PAM_VERSION = 1.7.2", mk)
+        self.assertIn("LINUX_PAM_VERSION_STOCK := $(LINUX_PAM_VERSION)", mk)
+        self.assertIn(
+            "LINUX_PAM_VERSION = $(call qstrip,"
+            "$(BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE))",
+            mk,
+        )
+        self.assertNotIn("BR_NO_CHECK_HASH_FOR", mk)
+        self.assertIn("define LINUX_PAM_FETCH_HASH", mk)
+        self.assertIn("LINUX_PAM_PRE_DOWNLOAD_HOOKS += LINUX_PAM_FETCH_HASH", mk)
+        self.assertIn(
+            "LINUX_PAM_HASH_FILE := $(dir $(lastword $(MAKEFILE_LIST)))"
+            "linux-pam.hash",
+            mk,
+        )
+        self.assertIn("$(LINUX_PAM_SITE)/$(LINUX_PAM_SOURCE)", mk)
+        override_if = mk.index(
+            "ifneq ($(call qstrip,$(BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE)),)"
+        )
+        fetch_hook = mk.index("LINUX_PAM_PRE_DOWNLOAD_HOOKS += LINUX_PAM_FETCH_HASH")
+        meson_eval = mk.index("$(eval $(meson-package))")
+        self.assertLess(override_if, fetch_hook)
+        self.assertLess(fetch_hook, meson_eval)
+        self.assertIn(
+            "LINUX_PAM_SOURCE = Linux-PAM-$(LINUX_PAM_VERSION).tar.xz",
+            mk,
+        )
+
+    def test_idempotent(self) -> None:
+        """A second --customize does not duplicate the override blocks."""
+        self._apply()
+        first_systemd_cfg = (
+            self.br / "package" / "systemd" / "Config.in"
+        ).read_text()
+        first_systemd_mk = (
+            self.br / "package" / "systemd" / "systemd.mk"
+        ).read_text()
+        first_pam_cfg = (
+            self.br / "package" / "linux-pam" / "Config.in"
+        ).read_text()
+        first_pam_mk = (self.br / "package" / "linux-pam" / "linux-pam.mk").read_text()
+        self._apply()
+        self.assertEqual(
+            (self.br / "package" / "systemd" / "Config.in").read_text(),
+            first_systemd_cfg,
+        )
+        self.assertEqual(
+            (self.br / "package" / "systemd" / "systemd.mk").read_text(),
+            first_systemd_mk,
+        )
+        self.assertEqual(
+            (self.br / "package" / "linux-pam" / "Config.in").read_text(),
+            first_pam_cfg,
+        )
+        self.assertEqual(
+            (self.br / "package" / "linux-pam" / "linux-pam.mk").read_text(),
+            first_pam_mk,
+        )
+        self.assertEqual(
+            first_systemd_cfg.count("config BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE"),
+            1,
+        )
+        self.assertEqual(first_systemd_mk.count("SYSTEMD_VERSION_STOCK :="), 1)
+        self.assertEqual(
+            first_pam_cfg.count("config BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE"),
+            1,
+        )
+        self.assertEqual(first_pam_mk.count("LINUX_PAM_VERSION_STOCK :="), 1)
+
+    def test_missing_package_dirs_are_noop(self) -> None:
+        """Incomplete trees without systemd/linux-pam skip the override patch."""
+        br = self.td / "bare"
+        br.mkdir()
+        (br / "Config.in").write_text('menu "x"\nendmenu\n')
+        shutil.copy(SAMPLE, br / "Makefile")
+        (br / "package").mkdir()
+        (br / "package" / "Config.in").write_text(
+            'menu "Target packages"\nendmenu\n'
+        )
+        cb.patch_package_version_overrides(br)
+        self.assertFalse((br / "package" / "systemd").exists())
+        self.assertFalse((br / "package" / "linux-pam").exists())
+
+    def test_update_kernel_support_does_not_add_overrides(self) -> None:
+        """--update-kernel-support must not patch systemd or linux-pam."""
+        names = cb.update_kernel_support.__code__.co_names
+        self.assertNotIn("patch_package_version_overrides", names)
+        self.assertNotIn("patch_systemd_config_in", names)
+        self.assertNotIn("patch_systemd_mk", names)
+        self.assertNotIn("patch_linux_pam_config_in", names)
+        self.assertNotIn("patch_linux_pam_mk", names)
+        self.assertNotIn("customize_buildroot", names)
+
+    def test_replaces_legacy_hash_skip_with_fetch_hash(self) -> None:
+        """Re-running --customize upgrades BR_NO_CHECK_HASH_FOR to FETCH_HASH."""
+        systemd_mk = self.br / "package" / "systemd" / "systemd.mk"
+        pam_mk = self.br / "package" / "linux-pam" / "linux-pam.mk"
+        systemd_mk.write_text(
+            _SYSTEMD_MK_2026_08.replace(
+                "$(eval $(meson-package))\n",
+                "SYSTEMD_VERSION_STOCK := $(SYSTEMD_VERSION)\n"
+                "ifneq ($(SYSTEMD_VERSION),$(SYSTEMD_VERSION_STOCK))\n"
+                "BR_NO_CHECK_HASH_FOR += systemd-$(SYSTEMD_VERSION).tar.gz\n"
+                "endif\n"
+                "$(eval $(meson-package))\n",
+            )
+        )
+        pam_mk.write_text(
+            _LINUX_PAM_MK_2026_08.replace(
+                "$(eval $(meson-package))\n",
+                "LINUX_PAM_VERSION_STOCK := $(LINUX_PAM_VERSION)\n"
+                "ifneq ($(LINUX_PAM_VERSION),$(LINUX_PAM_VERSION_STOCK))\n"
+                "BR_NO_CHECK_HASH_FOR += $(LINUX_PAM_SOURCE)\n"
+                "endif\n"
+                "$(eval $(meson-package))\n",
+            )
+        )
+        self._apply()
+        systemd_text = systemd_mk.read_text()
+        pam_text = pam_mk.read_text()
+        self.assertNotIn("BR_NO_CHECK_HASH_FOR", systemd_text)
+        self.assertNotIn("BR_NO_CHECK_HASH_FOR", pam_text)
+        self.assertIn("SYSTEMD_PRE_DOWNLOAD_HOOKS += SYSTEMD_FETCH_HASH", systemd_text)
+        self.assertIn(
+            "LINUX_PAM_PRE_DOWNLOAD_HOOKS += LINUX_PAM_FETCH_HASH",
+            pam_text,
+        )
+        self.assertEqual(systemd_text.count("define SYSTEMD_FETCH_HASH"), 1)
+        self.assertEqual(pam_text.count("define LINUX_PAM_FETCH_HASH"), 1)
+
+    def test_setup_config_selects_override_versions(self) -> None:
+        """The installer fragment requests systemd 262 and linux-pam 1.7.3."""
+        setup = (
+            Path(__file__).resolve().parent
+            / "buildrootConf"
+            / "setup.config"
+        ).read_text(encoding="utf-8")
+        self.assertIn('BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE="262"', setup)
+        self.assertIn('BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE="1.7.3"', setup)
 
 
 if __name__ == "__main__":

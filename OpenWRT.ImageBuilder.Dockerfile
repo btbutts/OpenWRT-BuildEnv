@@ -112,9 +112,11 @@ COPY --chown=builder:builder \
     resources/buildOpenWRTimages.sh \
     resources/getBuildroot.sh \
     resources/compileBuildroot.sh \
-    resources/customizeBuildroot.py \
     resources/buildInstallerUSB.sh \
     /builder/
+COPY --chown=builder:builder \
+    resources/customizeBuildroot \
+    /builder/customizeBuildroot/
 COPY --chown=builder:builder \
     resources/buildrootConf \
     /builder/buildrootConf/
@@ -126,7 +128,7 @@ RUN chmod +x \
     /builder/compileBuildroot.sh \
     /builder/buildOpenWRTimages.sh \
     /builder/getBuildroot.sh \
-    /builder/customizeBuildroot.py \
+    /builder/customizeBuildroot/main.py \
     /builder/buildInstallerUSB.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]

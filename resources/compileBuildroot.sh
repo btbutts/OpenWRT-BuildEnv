@@ -9,7 +9,7 @@ set -e
 # br2-external tree. Make variable, not Kconfig. First make writes
 # output/.br2-external.mk; still export so a wiped tree's first
 # installer_defconfig sees custom packages.
-: "${BR2_EXTERNAL:=${BUILDROOT_CONF_DIR%/}/custom_package}"
+: "${BR2_EXTERNAL:=${BR_CUSTOM_PACKAGE_PATH:-${BUILDROOT_CONF_DIR%/}/custom_package}}"
 export BR2_EXTERNAL
 
 BUILDROOT_OVERLAY_DIR="${BUILDROOT_CONF_DIR%/}/rootfs-overlay"

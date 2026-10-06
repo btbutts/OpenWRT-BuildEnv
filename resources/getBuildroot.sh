@@ -5,15 +5,17 @@ set -e
 : "${BUILDROOT_BUILDER_DIR:=/builder/Buildroot-Builder}"
 : "${BUILDROOT_OUTPUT_DIR:=/builder/workspace/output/buildroot}"
 : "${WORKSPACE_DIR:=/builder/workspace}"
+: "${BR_VERSION_OVERRIDE:=}"
 
-VERSION="" # Define version override here
+VERSION="${BR_VERSION_OVERRIDE}" # Define version override here
 BUILDROOT_URL="https://buildroot.org/downloads/"
-CUSTOMIZE_PY="${BUILDER_ROOT_DIR%/}/customizeBuildroot.py"
+CUSTOMIZER="${BUILDER_ROOT_DIR%/}/customizeBuildroot/main.py"
 
 # Argument Parser
 UPGRADE_FLAG=false
 FORCE_FLAG=false
 CUSTOMIZE_FLAG=false
+UPDATE_KERNEL_FLAG=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -U|--upgrade)
@@ -26,6 +28,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --customize)
             CUSTOMIZE_FLAG=true
+            shift
+            ;;
+        --update-kernel-support)
+            UPDATE_KERNEL_FLAG=true
             shift
             ;;
         *)
@@ -97,20 +103,51 @@ purge_target_directory() {
     sudo find "${BUILDROOT_BUILDER_DIR%/}" -mindepth 1 -delete
 }
 
+run_customizer() {
+    # Parent of the customizeBuildroot package must be on PYTHONPATH so
+    # `python3 .../customizeBuildroot/main.py` can import customizeBuildroot.*.
+    PYTHONPATH="${BUILDER_ROOT_DIR%/}${PYTHONPATH:+:$PYTHONPATH}" \
+        python3 "$CUSTOMIZER" "$@"
+}
+
 customize_buildroot() {
-    if [ ! -f "$CUSTOMIZE_PY" ]; then
-        printf '%s\n' "Error: customizeBuildroot.py not found at ${CUSTOMIZE_PY}" >&2
+    if [ ! -f "$CUSTOMIZER" ]; then
+        printf '%s\n' "Error: customizeBuildroot/main.py not found at ${CUSTOMIZER}" >&2
         return 1
     fi
     if [ ! -f "${BUILDROOT_BUILDER_DIR%/}/Config.in" ]; then
         printf '%s\n' "Error: Buildroot is not extracted at ${BUILDROOT_BUILDER_DIR%/} (missing Config.in)." >&2
         return 1
     fi
-    printf '%s\n' "--> Applying Buildroot customizations via ${CUSTOMIZE_PY}..."
-    python3 "$CUSTOMIZE_PY" \
+    printf '%s\n' "--> Applying Buildroot customizations via ${CUSTOMIZER}..."
+    run_customizer \
         --br-path "${BUILDROOT_BUILDER_DIR%/}" \
         --custom-package-dir "${BUILDER_ROOT_DIR%/}/buildrootConf/custom_package"
 }
+
+update_kernel_support() {
+    if [ ! -f "$CUSTOMIZER" ]; then
+        printf '%s\n' "Error: customizeBuildroot/main.py not found at ${CUSTOMIZER}" >&2
+        return 1
+    fi
+    if [ ! -f "${BUILDROOT_BUILDER_DIR%/}/Config.in" ]; then
+        printf '%s\n' "Error: Buildroot is not extracted at ${BUILDROOT_BUILDER_DIR%/} (missing Config.in)." >&2
+        return 1
+    fi
+    printf '%s\n' "--> Updating kernel/header latest to 7.2.8 via ${CUSTOMIZER}..."
+    run_customizer \
+        --br-path "${BUILDROOT_BUILDER_DIR%/}" \
+        --update-kernel-support
+}
+
+if [ "$UPDATE_KERNEL_FLAG" = true ]; then
+    if [ "$CUSTOMIZE_FLAG" = true ] || [ "$UPGRADE_FLAG" = true ] || [ "$FORCE_FLAG" = true ]; then
+        printf '%s\n' "Error: --update-kernel-support must be used by itself." >&2
+        exit 1
+    fi
+    update_kernel_support
+    exit 0
+fi
 
 # Ensure target directories exist without relying on Docker layers
 mkdir -p "${BUILDROOT_BUILDER_DIR%/}"
