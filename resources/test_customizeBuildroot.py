@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
+from collections.abc import Iterator
+from contextlib import contextmanager, redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 import customizeBuildroot as cb
@@ -220,7 +222,10 @@ class CustomPackageInstallTests(unittest.TestCase):
             "$(filter-out gcc-standalone-toolchain,$(LATE_CUSTOM_PACKAGES))",
             late,
         )
-        self.assertIn("include package/custom-late.mk", (self.br / "Makefile").read_text())
+        makefile = (self.br / "Makefile").read_text()
+        self.assertIn("include package/custom-late.mk", makefile)
+        self.assertIn("include package/fetch-hash.mk", makefile)
+        self.assertTrue((self.br / "package" / "fetch-hash.mk").is_file())
         self.assertEqual(
             cb.kconfig_package_symbol("gcc-standalone-toolchain"),
             "BR2_PACKAGE_GCC_STANDALONE_TOOLCHAIN",
@@ -228,6 +233,14 @@ class CustomPackageInstallTests(unittest.TestCase):
         self.assertEqual(
             cb.kconfig_package_symbol("uutils-coreutils"),
             "BR2_PACKAGE_UUTILS_COREUTILS",
+        )
+        self.assertEqual(
+            cb.kconfig_package_symbol("sudo-rs"),
+            "BR2_PACKAGE_SUDO_RS",
+        )
+        self.assertEqual(
+            cb.kconfig_package_symbol("fdfind"),
+            "BR2_PACKAGE_FDFIND",
         )
         self.assertIn("uutils-coreutils", cb.LATE_CUSTOM_SKIP_PACKAGES)
 
@@ -247,6 +260,7 @@ class CustomPackageInstallTests(unittest.TestCase):
         self.assertEqual(once_late, (self.br / "package" / "custom-late.mk").read_text())
         self.assertEqual(once_root.count("config BR2_KEEP_MAN_PAGES_DOCS"), 1)
         self.assertEqual(once_make.count("include package/custom-late.mk"), 1)
+        self.assertEqual(once_make.count("include package/fetch-hash.mk"), 1)
 
 
 class Br2ExternalLayoutTests(unittest.TestCase):
@@ -260,21 +274,23 @@ class Br2ExternalLayoutTests(unittest.TestCase):
         self.assertTrue((self.ROOT / "Config.in").is_file())
         self.assertTrue((self.ROOT / "external.mk").is_file())
         desc = (self.ROOT / "external.desc").read_text()
-        self.assertIn("name: OPENWRT_INSTALLER", desc)
+        self.assertIn("name: OPENWRT_INSTALLER_CUSTOM_PACKAGE", desc)
 
     def test_config_in_sources_each_package(self) -> None:
         """Root Config.in sources every package Config.in via BR2_EXTERNAL path."""
         text = (self.ROOT / "Config.in").read_text()
         self.assertIn('menu "Custom Packages"', text)
         for name in (
+            "fdfind",
             "gcc-standalone-toolchain",
             "groff",
             "hexedit",
             "sharutils",
+            "sudo-rs",
             "uutils-coreutils",
         ):
             self.assertIn(
-                f'source "$BR2_EXTERNAL_OPENWRT_INSTALLER_PATH/{name}/Config.in"',
+                f'source "$BR2_EXTERNAL_OPENWRT_INSTALLER_CUSTOM_PACKAGE_PATH/{name}/Config.in"',
                 text,
             )
             self.assertTrue((self.ROOT / name / "Config.in").is_file())
@@ -284,7 +300,8 @@ class Br2ExternalLayoutTests(unittest.TestCase):
         """external.mk includes */*.mk; late install stays in custom-late.mk."""
         text = (self.ROOT / "external.mk").read_text()
         self.assertIn(
-            "include $(sort $(wildcard $(BR2_EXTERNAL_OPENWRT_INSTALLER_PATH)/*/*.mk))",
+            "include $(sort $(wildcard "
+            "$(BR2_EXTERNAL_OPENWRT_INSTALLER_CUSTOM_PACKAGE_PATH)/*/*.mk))",
             text,
         )
         self.assertNotIn("gcc-standalone-toolchain-install:", text)
@@ -297,9 +314,80 @@ class Br2ExternalLayoutTests(unittest.TestCase):
         self.assertIn("depends on !BR2_PACKAGE_COREUTILS", text)
         self.assertNotIn("BR2_PACKAGE_BUSYBOX_SHOW_OTHERS", text)
         self.assertIn('default "0.12.0"', text)
+        self.assertIn(
+            "config BR2_PACKAGE_UUTILS_COREUTILS_INDIVIDUAL_BINARIES", text
+        )
+        self.assertNotIn("select BR2_PACKAGE_LIBSELINUX", text)
+        self.assertNotIn("depends on BR2_PACKAGE_LIBSELINUX", text)
         mk = (self.ROOT / "uutils-coreutils" / "uutils-coreutils.mk").read_text()
         self.assertIn("UUTILS_COREUTILS_CARGO_PROFILE = release", mk)
         self.assertNotIn("release-small", mk)
+        self.assertNotIn("FETCH_HASH", mk)
+        self.assertIn("ifeq ($(BR2_PACKAGE_LIBSELINUX),y)", mk)
+        self.assertIn("UUTILS_COREUTILS_APPLETS += chcon runcon", mk)
+        self.assertIn("feat_selinux", mk)
+        self.assertIn("usr/bin/[", mk)
+        self.assertIn(
+            "ifeq ($(BR2_PACKAGE_UUTILS_COREUTILS_INDIVIDUAL_BINARIES),y)", mk
+        )
+        applets = mk[
+            mk.index("UUTILS_COREUTILS_APPLETS =") : mk.index(
+                "UUTILS_COREUTILS_CARGO_FEATURES"
+            )
+        ]
+        for missing in (
+            "b3sum",
+            "hashsum",
+            "sha3-224sum",
+            "sha3sum",
+            "shake128sum",
+            "relpath",
+        ):
+            self.assertNotIn(missing, applets)
+        for name in (
+            "hexedit",
+            "sharutils",
+            "gcc-standalone-toolchain",
+            "sudo-rs",
+            "fdfind",
+        ):
+            pkg_mk = (self.ROOT / name / f"{name}.mk").read_text()
+            self.assertNotIn("FETCH_HASH", pkg_mk)
+            self.assertNotIn("_HASH_FILE", pkg_mk)
+
+    def test_sudo_rs_replaces_gnu_sudo(self) -> None:
+        """sudo-rs conflicts with GNU sudo, selects PAM, and sets setuid via PERMISSIONS."""
+        text = (self.ROOT / "sudo-rs" / "Config.in").read_text()
+        self.assertIn("config BR2_PACKAGE_SUDO_RS", text)
+        self.assertIn("depends on !BR2_PACKAGE_SUDO", text)
+        self.assertIn("select BR2_PACKAGE_LINUX_PAM", text)
+        self.assertIn('default "0.2.15"', text)
+        mk = (self.ROOT / "sudo-rs" / "sudo-rs.mk").read_text()
+        self.assertIn("define SUDO_RS_PERMISSIONS", mk)
+        self.assertIn("/usr/bin/sudo f 4755 0 0 - - - - -", mk)
+        self.assertIn("/usr/sbin/su f 4755 0 0 - - - - -", mk)
+        self.assertIn("/etc/sudoers f 0640 0 0 - - - - -", mk)
+        self.assertIn("SUDO_RS_DEPENDENCIES = linux-pam", mk)
+        self.assertIn("$(TARGET_DIR)/usr/bin/sudo", mk)
+        self.assertIn("$(TARGET_DIR)/usr/sbin/su", mk)
+        self.assertIn("$(TARGET_DIR)/etc/pam.d/sudo", mk)
+        self.assertNotIn("host-cargo", mk)
+        self.assertTrue((self.ROOT / "sudo-rs" / "sudoers").is_file())
+        self.assertTrue((self.ROOT / "sudo-rs" / "sudo.pam").is_file())
+        self.assertTrue((self.ROOT / "sudo-rs" / "su.pam").is_file())
+
+    def test_fdfind_installs_renamed_binary(self) -> None:
+        """fdfind installs the fd crate binary as /usr/bin/fdfind with no fd symlink."""
+        text = (self.ROOT / "fdfind" / "Config.in").read_text()
+        self.assertIn("config BR2_PACKAGE_FDFIND", text)
+        self.assertIn('default "10.5.0"', text)
+        mk = (self.ROOT / "fdfind" / "fdfind.mk").read_text()
+        self.assertIn("$(TARGET_DIR)/usr/bin/fdfind", mk)
+        self.assertNotRegex(mk, r"\$\(TARGET_DIR\)/usr/bin/fd[ \n]")
+        self.assertNotIn("ln -s", mk)
+        self.assertNotIn("ln -sf", mk)
+        self.assertNotIn("host-cargo", mk)
+        self.assertIn("$(call github,sharkdp,fd,v$(FDFIND_VERSION))", mk)
 
 
 class PatchLinuxToolsTests(unittest.TestCase):
@@ -674,6 +762,8 @@ class UpdateKernelSupportTests(unittest.TestCase):
         self.assertIn("config BR2_KEEP_MAN_PAGES_DOCS", (self.br / "Config.in").read_text())
         self.assertFalse((self.br / "linux" / "from-6.17" / "get-hash.mk").exists())
         self.assertNotIn("include linux/from-6.17/get-hash.mk", (self.br / "Makefile").read_text())
+        self.assertTrue((self.br / "package" / "fetch-hash.mk").is_file())
+        self.assertIn("include package/fetch-hash.mk", (self.br / "Makefile").read_text())
 
     def test_cli_update_kernel_support_skips_customize(self) -> None:
         """python customizeBuildroot/main.py --update-kernel-support is kernel-only."""
@@ -690,6 +780,11 @@ class UpdateKernelSupportTests(unittest.TestCase):
             (self.br / "Config.in").read_text(),
         )
         self.assertFalse((self.br / "package" / "custom-late.mk").exists())
+        self.assertTrue((self.br / "package" / "fetch-hash.mk").is_file())
+        self.assertIn(
+            "include package/fetch-hash.mk",
+            (self.br / "Makefile").read_text(encoding="utf-8"),
+        )
 
     def test_getbuildroot_flag_is_exclusive(self) -> None:
         """getBuildroot.sh documents --update-kernel-support as a lone argument."""
@@ -697,36 +792,69 @@ class UpdateKernelSupportTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("--update-kernel-support)", script)
+        self.assertIn("--update-rust-version)", script)
         self.assertIn("must be used by itself", script)
         self.assertIn("--update-kernel-support", script)
         self.assertIn("customizeBuildroot/main.py", script)
         self.assertIn('PYTHONPATH="${BUILDER_ROOT_DIR%/}', script)
+        self.assertNotIn("RUST_VERSION:=", script)
+        self.assertNotIn("RUST_BINDGEN_VERSION:=", script)
 
-    def test_installs_get_hash_mk(self) -> None:
-        """--update-kernel-support drops get-hash.mk next to linux.hash."""
+    def test_installs_fetch_hash_mk(self) -> None:
+        """--update-kernel-support installs package/fetch-hash.mk at Makefile EOF."""
+        leftover = self.br / "linux" / "from-6.17" / "get-hash.mk"
+        leftover.write_text("# leftover\n", encoding="utf-8")
+        makefile_path = self.br / "Makefile"
+        makefile_path.write_text(
+            makefile_path.read_text(encoding="utf-8").rstrip("\n")
+            + "\n\n# JIT-append kernel.org sha256 lines for linux/linux-headers tarballs.\n"
+            "include linux/from-6.17/get-hash.mk\n",
+            encoding="utf-8",
+        )
         self._apply()
-        dest = self.br / "linux" / "from-6.17" / "get-hash.mk"
+        dest = self.br / "package" / "fetch-hash.mk"
         self.assertTrue(dest.is_file())
+        self.assertFalse(leftover.exists())
         text = dest.read_text(encoding="utf-8")
-        self.assertIn("LINUX_HASH_FILE := $(dir $(lastword $(MAKEFILE_LIST)))linux.hash", text)
-        self.assertIn("LINUX_PRE_DOWNLOAD_HOOKS += LINUX_GET_HASH", text)
+        self.assertIn("FETCH_HASH_URLS", text)
+        self.assertNotIn("FETCH_HASH_METHOD_", text)
+        self.assertNotIn("cdn.kernel.org", text)
         self.assertIn(
-            "LINUX_HEADERS_PRE_DOWNLOAD_HOOKS += LINUX_HEADERS_GET_HASH",
+            "usbutils|https://www.kernel.org/pub/linux/utils/usb/usbutils/sha256sums.asc",
             text,
         )
         self.assertIn(
-            "https://cdn.kernel.org/pub/linux/kernel/v$$major.x/sha256sums.asc",
+            "rust|https://static.rust-lang.org/dist/"
+            "rustc-$(RUST_VERSION)-src.tar.xz.sha256",
             text,
         )
         self.assertIn(
-            "# From https://www.kernel.org/pub/linux/kernel/v$$major.x/sha256sums.asc",
+            "linux|https://www.kernel.org/pub/linux/kernel/v$$major.x/sha256sums.asc",
             text,
         )
-        makefile = (self.br / "Makefile").read_text(encoding="utf-8")
-        self.assertIn("include linux/from-6.17/get-hash.mk", makefile)
-        self.assertEqual(makefile.count("include linux/from-6.17/get-hash.mk"), 1)
-        self.assertLess(
-            makefile.index("include linux/from-6.17/get-hash.mk"),
+        self.assertIn(
+            "linux-headers|https://www.kernel.org/pub/linux/kernel/v$$major.x/sha256sums.asc",
+            text,
+        )
+        self.assertIn(
+            "gcc-standalone-toolchain|https://toolchains.bootlin.com/downloads/"
+            "releases/toolchains/$(GCC_STANDALONE_TOOLCHAIN_BOOTLIN_ARCH)/tarballs/"
+            "$(GCC_STANDALONE_TOOLCHAIN_BOOTLIN_ARCH)--"
+            "$(GCC_STANDALONE_TOOLCHAIN_BOOTLIN_LIBC)--stable-$$major.$$minor.sha256",
+            text,
+        )
+        self.assertIn("PRE_DOWNLOAD_HOOKS += FETCH_HASH", text)
+        self.assertIn("$${e%%|*}", text)
+        self.assertIn("sha256sum", text)
+        self.assertIn("DOWNLOAD_POST_PROCESS", text)
+        self.assertIn("$($(PKG)_DL_DIR)", text)
+        self.assertIn("support/download/", text)
+        makefile = makefile_path.read_text(encoding="utf-8")
+        self.assertIn("include package/fetch-hash.mk", makefile)
+        self.assertEqual(makefile.count("include package/fetch-hash.mk"), 1)
+        self.assertNotIn("include linux/from-6.17/get-hash.mk", makefile)
+        self.assertGreater(
+            makefile.index("include package/fetch-hash.mk"),
             makefile.index("include $(sort $(wildcard package/*/*.mk))"),
         )
         in_define = False
@@ -741,75 +869,276 @@ class UpdateKernelSupportTests(unittest.TestCase):
                 self.assertTrue(line.startswith("\t"), line)
         self._apply()
         self.assertEqual(
-            (self.br / "Makefile").read_text(encoding="utf-8").count(
-                "include linux/from-6.17/get-hash.mk"
+            makefile_path.read_text(encoding="utf-8").count(
+                "include package/fetch-hash.mk"
             ),
             1,
         )
         self.assertEqual(dest.read_text(encoding="utf-8"), text)
 
-    def test_get_hash_awk_appends_under_matching_series_section(self) -> None:
-        """New sha256 lands under the v7.x comment, above v6.x and licenses."""
-        hash_file = self.td / "linux.hash"
-        hash_file.write_text(
-            "# From https://www.kernel.org/pub/linux/kernel/v7.x/sha256sums.asc\n"
-            "sha256  614d95fafdcb5cce2b6620e7edc6afbb606bffd4655405586815d84687841ad7"
-            "  linux-7.1.13.tar.xz\n"
-            "\n"
-            "# From https://www.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc\n"
-            "sha256  ae826f33111fea6f1d279dde7299d7463c8dfd204aeb75a8fb5432bc60a28191"
-            "  linux-6.18.49.tar.xz\n"
-            "\n"
-            "# Licenses hashes\n"
-            "sha256  fb5a425bd3b3cd6071a3a9aff9909a859e7c1158d54d32e07658398cd67eb6a0"
-            "  COPYING\n",
-            encoding="utf-8",
-        )
-        section = (
-            "# From https://www.kernel.org/pub/linux/kernel/v7.x/sha256sums.asc"
-        )
-        line = (
-            "sha256  b4c5dfbe51a364a6c7f03869200f88c8e1f77403539005f14b7fc6bc91b8d8ba"
-            "  linux-7.2.9.tar.xz"
-        )
-        out = self.td / "linux.hash.out"
-        awk = r"""
-$0 == section { print; insec = 1; next }
-insec && (/^$/ || /^# /) { print line; print; inserted = 1; insec = 0; next }
-!inserted && $0 == "# Licenses hashes" {
-    print section; print line; print ""; inserted = 1
-}
-{ print }
-END {
-    if (insec && !inserted) print line
-    if (!inserted) { print ""; print section; print line }
-}
+
+_RUST_MK_2026_08 = """\
+################################################################################
+#
+# rust
+#
+################################################################################
+
+# When updating this version, check whether support/download/cargo-post-process
+# still generates the same archives.
+RUST_VERSION = 1.97.1
+RUST_SOURCE = rustc-$(RUST_VERSION)-src.tar.xz
+RUST_SITE = https://static.rust-lang.org/dist
+
+define HOST_RUST_CONFIGURE_CMDS
+	echo 'target = ["$(RUSTC_TARGET_NAME)"]'
+endef
+
+$(eval $(host-generic-package))
 """
-        with out.open("w", encoding="utf-8") as stdout:
-            subprocess.run(
-                [
-                    "awk",
-                    "-v",
-                    f"section={section}",
-                    "-v",
-                    f"line={line}",
-                    awk,
-                    str(hash_file),
-                ],
-                check=True,
-                stdout=stdout,
-            )
-        text = out.read_text(encoding="utf-8")
-        v7 = text.index(section)
-        new = text.index("linux-7.2.9.tar.xz")
-        v6 = text.index("v6.x/sha256sums.asc")
-        lic = text.index("# Licenses hashes")
-        self.assertLess(v7, new)
-        self.assertLess(new, v6)
-        self.assertLess(v6, lic)
-        self.assertIn("linux-7.1.13.tar.xz", text)
-        self.assertIn("linux-6.18.49.tar.xz", text)
-        self.assertIn("COPYING", text)
+
+_RUST_BIN_MK_2026_08 = """\
+################################################################################
+#
+# rust-bin
+#
+################################################################################
+
+# When updating this version, check whether support/download/cargo-post-process
+# still generates the same archives.
+RUST_BIN_VERSION = 1.97.1
+RUST_BIN_SITE = https://static.rust-lang.org/dist
+HOST_RUST_BIN_SOURCE = rust-$(RUST_BIN_VERSION)-$(RUSTC_HOST_NAME).tar.xz
+
+$(eval $(host-generic-package))
+"""
+
+_RUST_BINDGEN_MK_2026_08 = """\
+################################################################################
+#
+# rust-bindgen
+#
+################################################################################
+
+RUST_BINDGEN_VERSION = 0.72.1
+RUST_BINDGEN_SITE = $(call github,rust-lang,rust-bindgen,refs/tags/v$(RUST_BINDGEN_VERSION))
+RUST_BINDGEN_LICENSE = BSD-3-clause
+
+$(eval $(host-cargo-package))
+"""
+
+
+class UpdateRustVersionTests(unittest.TestCase):
+    """--update-rust-version patches rust/rust-bin/rust-bindgen from env vars."""
+
+    def setUp(self) -> None:
+        """Minimal 2026.08 rust package makefile tree."""
+        self.td = Path(tempfile.mkdtemp())
+        self.br = self.td / "Buildroot-Builder"
+        rust = self.br / "package" / "rust"
+        rust_bin = self.br / "package" / "rust-bin"
+        bindgen = self.br / "package" / "rust-bindgen"
+        rust.mkdir(parents=True)
+        rust_bin.mkdir(parents=True)
+        bindgen.mkdir(parents=True)
+        (self.br / "Config.in").write_text('menu "x"\nendmenu\n', encoding="utf-8")
+        shutil.copy(SAMPLE, self.br / "Makefile")
+        (self.br / "package" / "Config.in").write_text(
+            'menu "Target packages"\nendmenu\n', encoding="utf-8"
+        )
+        self.rust_mk = rust / "rust.mk"
+        self.rust_bin_mk = rust_bin / "rust-bin.mk"
+        self.bindgen_mk = bindgen / "rust-bindgen.mk"
+        self.rust_mk.write_text(_RUST_MK_2026_08, encoding="utf-8")
+        self.rust_bin_mk.write_text(_RUST_BIN_MK_2026_08, encoding="utf-8")
+        self.bindgen_mk.write_text(_RUST_BINDGEN_MK_2026_08, encoding="utf-8")
+
+    def tearDown(self) -> None:
+        """Remove the temp tree."""
+        shutil.rmtree(self.td)
+
+    @contextmanager
+    def _env(self, **values: str | None) -> Iterator[None]:
+        """Set rust env vars for one test; restore afterward. No defaults."""
+        keys = ("RUST_VERSION", "RUST_BINDGEN_VERSION")
+        saved = {key: os.environ.get(key) for key in keys}
+        for key in keys:
+            os.environ.pop(key, None)
+        for key, value in values.items():
+            if value is not None:
+                os.environ[key] = value
+        try:
+            yield
+        finally:
+            for key in keys:
+                os.environ.pop(key, None)
+                previous = saved[key]
+                if previous is not None:
+                    os.environ[key] = previous
+
+    def test_patches_rust_and_bindgen_from_env(self) -> None:
+        """RUST_VERSION updates rust and rust-bin; RUST_BINDGEN_VERSION updates bindgen."""
+        with self._env(RUST_VERSION="1.99.0", RUST_BINDGEN_VERSION="0.73.2"):
+            cb.update_rust_version(self.br)
+        rust_text = self.rust_mk.read_text(encoding="utf-8")
+        bin_text = self.rust_bin_mk.read_text(encoding="utf-8")
+        bindgen_text = self.bindgen_mk.read_text(encoding="utf-8")
+        self.assertIn("RUST_VERSION = 1.99.0\n", rust_text)
+        self.assertNotIn("RUST_VERSION = 1.97.1\n", rust_text)
+        self.assertIn("RUST_SOURCE = rustc-$(RUST_VERSION)-src.tar.xz\n", rust_text)
+        self.assertIn("define HOST_RUST_CONFIGURE_CMDS\n", rust_text)
+        self.assertIn("$(eval $(host-generic-package))\n", rust_text)
+        self.assertIn("RUST_BIN_VERSION = 1.99.0\n", bin_text)
+        self.assertIn("RUST_BINDGEN_VERSION = 0.73.2\n", bindgen_text)
+        self.assertIn(
+            "RUST_BINDGEN_SITE = $(call github,rust-lang,rust-bindgen,"
+            "refs/tags/v$(RUST_BINDGEN_VERSION))\n",
+            bindgen_text,
+        )
+        self.assertTrue((self.br / "package" / "fetch-hash.mk").is_file())
+        self.assertIn(
+            "include package/fetch-hash.mk",
+            (self.br / "Makefile").read_text(encoding="utf-8"),
+        )
+        self.assertFalse((self.br / "package" / "rustc").exists())
+
+    def test_rust_only_leaves_bindgen(self) -> None:
+        """A set RUST_VERSION with blank bindgen env patches only rust/rust-bin."""
+        with self._env(RUST_VERSION="1.99.0"):
+            buf = StringIO()
+            with redirect_stdout(buf):
+                cb.update_rust_version(self.br)
+        self.assertIn("RUST_VERSION = 1.99.0\n", self.rust_mk.read_text(encoding="utf-8"))
+        self.assertIn(
+            "RUST_BIN_VERSION = 1.99.0\n",
+            self.rust_bin_mk.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "RUST_BINDGEN_VERSION = 0.72.1\n",
+            self.bindgen_mk.read_text(encoding="utf-8"),
+        )
+        self.assertIn("Skipping rust-bindgen", buf.getvalue())
+        self.assertIn("Declare RUST_BINDGEN_VERSION", buf.getvalue())
+
+    def test_bindgen_only_leaves_rust(self) -> None:
+        """A set RUST_BINDGEN_VERSION with blank rust env patches only bindgen."""
+        with self._env(RUST_BINDGEN_VERSION="0.73.2"):
+            buf = StringIO()
+            with redirect_stdout(buf):
+                cb.update_rust_version(self.br)
+        self.assertIn("RUST_VERSION = 1.97.1\n", self.rust_mk.read_text(encoding="utf-8"))
+        self.assertIn(
+            "RUST_BIN_VERSION = 1.97.1\n",
+            self.rust_bin_mk.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "RUST_BINDGEN_VERSION = 0.73.2\n",
+            self.bindgen_mk.read_text(encoding="utf-8"),
+        )
+        self.assertIn("Skipping rust and rust-bin", buf.getvalue())
+        self.assertIn("Declare RUST_VERSION", buf.getvalue())
+
+    def test_blank_env_is_noop(self) -> None:
+        """Unset or blank env vars leave the makefiles unchanged."""
+        with self._env():
+            buf = StringIO()
+            with redirect_stdout(buf):
+                cb.update_rust_version(self.br)
+        self.assertEqual(self.rust_mk.read_text(encoding="utf-8"), _RUST_MK_2026_08)
+        self.assertEqual(self.rust_bin_mk.read_text(encoding="utf-8"), _RUST_BIN_MK_2026_08)
+        self.assertEqual(
+            self.bindgen_mk.read_text(encoding="utf-8"), _RUST_BINDGEN_MK_2026_08
+        )
+        self.assertFalse((self.br / "package" / "fetch-hash.mk").exists())
+        self.assertIn("nothing to patch", buf.getvalue())
+
+        with self._env(RUST_VERSION="", RUST_BINDGEN_VERSION="   "):
+            cb.update_rust_version(self.br)
+        self.assertEqual(self.rust_mk.read_text(encoding="utf-8"), _RUST_MK_2026_08)
+
+        with self._env(RUST_VERSION="not-a-version"):
+            cb.update_rust_version(self.br)
+        self.assertEqual(self.rust_mk.read_text(encoding="utf-8"), _RUST_MK_2026_08)
+
+    def test_strips_quotes_from_env_value(self) -> None:
+        """Quoted env values still patch as the inner version number."""
+        with self._env(RUST_VERSION='"1.99.0"', RUST_BINDGEN_VERSION="'0.73.2'"):
+            cb.update_rust_version(self.br)
+        self.assertIn("RUST_VERSION = 1.99.0\n", self.rust_mk.read_text(encoding="utf-8"))
+        self.assertIn(
+            "RUST_BINDGEN_VERSION = 0.73.2\n",
+            self.bindgen_mk.read_text(encoding="utf-8"),
+        )
+
+    def test_idempotent(self) -> None:
+        """A second --update-rust-version leaves already-patched files unchanged."""
+        with self._env(RUST_VERSION="1.99.0", RUST_BINDGEN_VERSION="0.73.2"):
+            cb.update_rust_version(self.br)
+            first_rust = self.rust_mk.read_text(encoding="utf-8")
+            first_bin = self.rust_bin_mk.read_text(encoding="utf-8")
+            first_bindgen = self.bindgen_mk.read_text(encoding="utf-8")
+            cb.update_rust_version(self.br)
+        self.assertEqual(self.rust_mk.read_text(encoding="utf-8"), first_rust)
+        self.assertEqual(self.rust_bin_mk.read_text(encoding="utf-8"), first_bin)
+        self.assertEqual(self.bindgen_mk.read_text(encoding="utf-8"), first_bindgen)
+        self.assertEqual(first_rust.count("RUST_VERSION = 1.99.0\n"), 1)
+
+    def test_missing_makefile_errors(self) -> None:
+        """A set env var with a missing package makefile is an error."""
+        self.rust_mk.unlink()
+        with (
+            self._env(RUST_VERSION="1.99.0"),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            cb.update_rust_version(self.br)
+        self.assertIn("rust.mk", str(raised.exception))
+
+    def test_cli_update_rust_version_skips_customize(self) -> None:
+        """python customizeBuildroot/main.py --update-rust-version is rust-only."""
+        with self._env(RUST_VERSION="1.99.0", RUST_BINDGEN_VERSION="0.73.2"):
+            rc = cb.main(["--br-path", str(self.br), "--update-rust-version"])
+        self.assertEqual(rc, 0)
+        self.assertIn("RUST_VERSION = 1.99.0\n", self.rust_mk.read_text(encoding="utf-8"))
+        self.assertNotIn(
+            "config BR2_KEEP_MAN_PAGES_DOCS",
+            (self.br / "Config.in").read_text(encoding="utf-8"),
+        )
+        self.assertFalse((self.br / "package" / "custom-late.mk").exists())
+        self.assertTrue((self.br / "package" / "fetch-hash.mk").is_file())
+
+    def test_customize_does_not_bump_rust(self) -> None:
+        """--customize must not rewrite rust/rust-bin/rust-bindgen versions."""
+        custom = self.td / "custom"
+        groff = custom / "groff"
+        groff.mkdir(parents=True)
+        (groff / "Config.in").write_text(
+            'config BR2_PACKAGE_GROFF\n\tbool "g"\n', encoding="utf-8"
+        )
+        with self._env(RUST_VERSION="1.99.0", RUST_BINDGEN_VERSION="0.73.2"):
+            cb.customize_buildroot(self.br, custom)
+        self.assertEqual(self.rust_mk.read_text(encoding="utf-8"), _RUST_MK_2026_08)
+        self.assertEqual(self.rust_bin_mk.read_text(encoding="utf-8"), _RUST_BIN_MK_2026_08)
+        self.assertEqual(
+            self.bindgen_mk.read_text(encoding="utf-8"), _RUST_BINDGEN_MK_2026_08
+        )
+        names = cb.customize_buildroot.__code__.co_names
+        self.assertNotIn("update_rust_version", names)
+
+    def test_module_has_no_version_fallback(self) -> None:
+        """host_rust.py does not bake in a default rust or bindgen version."""
+        src = (
+            Path(__file__).resolve().parent
+            / "customizeBuildroot"
+            / "patches"
+            / "host_rust.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn('os.environ.get("RUST_VERSION",', src)
+        self.assertNotIn("os.environ.get('RUST_VERSION',", src)
+        self.assertNotIn('os.environ.get("RUST_BINDGEN_VERSION",', src)
+        self.assertNotIn("os.environ.get('RUST_BINDGEN_VERSION',", src)
+        self.assertNotIn("1.99.0", src)
+        self.assertNotIn("0.73.2", src)
+        self.assertNotIn("import configobj", src)
 
 
 _SYSTEMD_CONFIG_2026_08 = """\
@@ -922,22 +1251,12 @@ class PackageVersionOverrideTests(unittest.TestCase):
             mk,
         )
         self.assertNotIn("BR_NO_CHECK_HASH_FOR", mk)
-        self.assertIn("define SYSTEMD_FETCH_HASH", mk)
-        self.assertIn("SYSTEMD_PRE_DOWNLOAD_HOOKS += SYSTEMD_FETCH_HASH", mk)
-        self.assertIn("HOST_SYSTEMD_PRE_DOWNLOAD_HOOKS += SYSTEMD_FETCH_HASH", mk)
-        self.assertIn(
-            "SYSTEMD_HASH_FILE := $(dir $(lastword $(MAKEFILE_LIST)))systemd.hash",
-            mk,
-        )
-        self.assertIn('$$1 == "sha256" && $$NF == f', mk)
-        self.assertIn("$(SYSTEMD_SITE)/$(SYSTEMD_SOURCE)", mk)
-        override_if = mk.index(
-            "ifneq ($(call qstrip,$(BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE)),)"
-        )
-        fetch_hook = mk.index("SYSTEMD_PRE_DOWNLOAD_HOOKS += SYSTEMD_FETCH_HASH")
+        self.assertNotIn("define SYSTEMD_FETCH_HASH", mk)
+        self.assertNotIn("SYSTEMD_PRE_DOWNLOAD_HOOKS += SYSTEMD_FETCH_HASH", mk)
         meson_eval = mk.index("$(eval $(meson-package))")
-        self.assertLess(override_if, fetch_hook)
-        self.assertLess(fetch_hook, meson_eval)
+        filter_opts = mk.index("SYSTEMD_CONF_OPTS := $(filter-out")
+        self.assertLess(filter_opts, meson_eval)
+        self.assertTrue((self.br / "package" / "fetch-hash.mk").is_file())
         self.assertIn("-Dsysvinit-path=", mk)
         self.assertIn("-Dlibidn=disabled", mk)
         stock = mk.index("SYSTEMD_VERSION = 258.7")
@@ -968,25 +1287,13 @@ class PackageVersionOverrideTests(unittest.TestCase):
             mk,
         )
         self.assertNotIn("BR_NO_CHECK_HASH_FOR", mk)
-        self.assertIn("define LINUX_PAM_FETCH_HASH", mk)
-        self.assertIn("LINUX_PAM_PRE_DOWNLOAD_HOOKS += LINUX_PAM_FETCH_HASH", mk)
-        self.assertIn(
-            "LINUX_PAM_HASH_FILE := $(dir $(lastword $(MAKEFILE_LIST)))"
-            "linux-pam.hash",
-            mk,
-        )
-        self.assertIn("$(LINUX_PAM_SITE)/$(LINUX_PAM_SOURCE)", mk)
-        override_if = mk.index(
-            "ifneq ($(call qstrip,$(BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE)),)"
-        )
-        fetch_hook = mk.index("LINUX_PAM_PRE_DOWNLOAD_HOOKS += LINUX_PAM_FETCH_HASH")
-        meson_eval = mk.index("$(eval $(meson-package))")
-        self.assertLess(override_if, fetch_hook)
-        self.assertLess(fetch_hook, meson_eval)
+        self.assertNotIn("define LINUX_PAM_FETCH_HASH", mk)
+        self.assertNotIn("LINUX_PAM_PRE_DOWNLOAD_HOOKS += LINUX_PAM_FETCH_HASH", mk)
         self.assertIn(
             "LINUX_PAM_SOURCE = Linux-PAM-$(LINUX_PAM_VERSION).tar.xz",
             mk,
         )
+        self.assertTrue((self.br / "package" / "fetch-hash.mk").is_file())
 
     def test_idempotent(self) -> None:
         """A second --customize does not duplicate the override blocks."""
@@ -1053,8 +1360,8 @@ class PackageVersionOverrideTests(unittest.TestCase):
         self.assertNotIn("patch_linux_pam_mk", names)
         self.assertNotIn("customize_buildroot", names)
 
-    def test_replaces_legacy_hash_skip_with_fetch_hash(self) -> None:
-        """Re-running --customize upgrades BR_NO_CHECK_HASH_FOR to FETCH_HASH."""
+    def test_replaces_legacy_hash_skip(self) -> None:
+        """Re-running --customize drops leftover BR_NO_CHECK_HASH_FOR."""
         systemd_mk = self.br / "package" / "systemd" / "systemd.mk"
         pam_mk = self.br / "package" / "linux-pam" / "linux-pam.mk"
         systemd_mk.write_text(
@@ -1082,13 +1389,9 @@ class PackageVersionOverrideTests(unittest.TestCase):
         pam_text = pam_mk.read_text()
         self.assertNotIn("BR_NO_CHECK_HASH_FOR", systemd_text)
         self.assertNotIn("BR_NO_CHECK_HASH_FOR", pam_text)
-        self.assertIn("SYSTEMD_PRE_DOWNLOAD_HOOKS += SYSTEMD_FETCH_HASH", systemd_text)
-        self.assertIn(
-            "LINUX_PAM_PRE_DOWNLOAD_HOOKS += LINUX_PAM_FETCH_HASH",
-            pam_text,
-        )
-        self.assertEqual(systemd_text.count("define SYSTEMD_FETCH_HASH"), 1)
-        self.assertEqual(pam_text.count("define LINUX_PAM_FETCH_HASH"), 1)
+        self.assertNotIn("SYSTEMD_FETCH_HASH", systemd_text)
+        self.assertNotIn("LINUX_PAM_FETCH_HASH", pam_text)
+        self.assertTrue((self.br / "package" / "fetch-hash.mk").is_file())
 
     def test_setup_config_selects_override_versions(self) -> None:
         """The installer fragment requests systemd 262 and linux-pam 1.7.3."""

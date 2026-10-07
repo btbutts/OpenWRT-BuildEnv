@@ -1,0 +1,38 @@
+config BR2_PACKAGE_SUDO_RS
+	bool "sudo-rs"
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	depends on BR2_USE_MMU
+	depends on !BR2_PACKAGE_SUDO
+	select BR2_PACKAGE_HOST_RUSTC
+	select BR2_PACKAGE_LINUX_PAM
+	help
+	  Memory-safe sudo and su (trifectatechfoundation/sudo-rs).
+	  Installs /usr/bin/sudo and /usr/sbin/su with the setuid bit
+	  via SUDO_RS_PERMISSIONS, plus visudo and /etc/sudoers.
+
+	  Mutually exclusive with GNU sudo (BR2_PACKAGE_SUDO).
+	  Tag 0.2.15 needs rustc >= 1.85 and linux-pam.
+
+	  https://github.com/trifectatechfoundation/sudo-rs
+
+if BR2_PACKAGE_SUDO_RS
+
+config BR2_PACKAGE_SUDO_RS_VERSION
+	string "sudo-rs version (GitHub tag without v)"
+	default "0.2.15"
+	help
+	  GitHub tag from trifectatechfoundation/sudo-rs without the
+	  leading v, for example 0.2.15. Leave this unset to use that
+	  default.
+
+	  At download time the tag is checked against
+	  https://api.github.com/repos/trifectatechfoundation/sudo-rs/tags
+	  An unknown tag fails the build. If sudo-rs.hash does not yet
+	  list that tag's tarball, its sha256 is appended.
+
+endif
+
+comment "sudo-rs needs host rustc and linux-pam, and conflicts with GNU sudo"
+	depends on BR2_USE_MMU
+	depends on !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS || \
+		BR2_PACKAGE_SUDO

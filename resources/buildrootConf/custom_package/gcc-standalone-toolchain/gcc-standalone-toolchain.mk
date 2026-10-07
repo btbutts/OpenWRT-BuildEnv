@@ -64,12 +64,6 @@ endif
 # gcc-standalone-toolchain-$(VERSION).tar.gz with an empty SITE.
 GCC_STANDALONE_TOOLCHAIN_SITE = $(GCC_URL_PREFIX)$(GCC_STANDALONE_TOOLCHAIN_BOOTLIN_ARCH)/tarballs
 GCC_STANDALONE_TOOLCHAIN_SOURCE = $(GCC_STANDALONE_TOOLCHAIN_BOOTLIN_ARCH)--$(GCC_STANDALONE_TOOLCHAIN_BOOTLIN_LIBC)--stable-$(GCC_STANDALONE_TOOLCHAIN_VERSION).tar.xz
-GCC_STANDALONE_TOOLCHAIN_TARBALL = $(GCC_STANDALONE_TOOLCHAIN_SOURCE)
-# Bootlin sidecar is {arch}--{libc}--stable-{ver}.sha256 (not .tar.xz.sha256).
-GCC_STANDALONE_TOOLCHAIN_HASH_URL = $(GCC_STANDALONE_TOOLCHAIN_SITE)/$(patsubst %.tar.xz,%.sha256,$(patsubst %.tar.bz2,%.sha256,$(GCC_STANDALONE_TOOLCHAIN_TARBALL)))
-# Immediate assignment: recursive $(MAKEFILE_LIST) at download time is
-# docs/manual/, not this package. Buildroot reads hashes from PKGDIR.
-GCC_STANDALONE_TOOLCHAIN_HASH_FILE := $(dir $(lastword $(MAKEFILE_LIST)))gcc-standalone-toolchain.hash
 GCC_STANDALONE_TOOLCHAIN_STRIP_COMPONENTS = 1
 # Prebuilt ELFs; skip per-package arch scan (thousands of python/.so/gcc files).
 GCC_STANDALONE_TOOLCHAIN_BIN_ARCH_EXCLUDE = opt/gcc-standalone-toolchain
@@ -169,34 +163,5 @@ define GCC_STANDALONE_TOOLCHAIN_INSTALL_TARGET_CMDS
 		> $(TARGET_DIR)/etc/profile.d/gcc-standalone-toolchain.sh
 	echo ">>> gcc-standalone-toolchain: target install finished"
 endef
-
-# Runs before generic-package wget's the tarball. If this tarball is not
-# already listed in gcc-standalone-toolchain.hash, fetch Bootlin's
-# .sha256 sidecar and append a Buildroot hash line.
-define GCC_STANDALONE_TOOLCHAIN_FETCH_HASH
-	mkdir -p $(dir $(GCC_STANDALONE_TOOLCHAIN_HASH_FILE))
-	if [ ! -f $(GCC_STANDALONE_TOOLCHAIN_HASH_FILE) ]; then \
-		printf '%s\n' \
-			'#' \
-			'# Automatically generated file; DO NOT EDIT.' \
-			'#' \
-			> $(GCC_STANDALONE_TOOLCHAIN_HASH_FILE); \
-	fi
-	if grep -qF "$(GCC_STANDALONE_TOOLCHAIN_TARBALL)" $(GCC_STANDALONE_TOOLCHAIN_HASH_FILE); then \
-		echo ">>> gcc-standalone-toolchain: hash already present for $(GCC_STANDALONE_TOOLCHAIN_TARBALL)"; \
-	else \
-		echo ">>> gcc-standalone-toolchain: fetching $(GCC_STANDALONE_TOOLCHAIN_HASH_URL)"; \
-		sidecar=$$(wget -qO- "$(GCC_STANDALONE_TOOLCHAIN_HASH_URL)") || sidecar=""; \
-		if [ -z "$$sidecar" ]; then \
-			echo "ERROR: could not fetch $(GCC_STANDALONE_TOOLCHAIN_HASH_URL)" >&2; \
-			exit 1; \
-		fi; \
-		printf '\n# From %s\nsha256  %s\n' \
-			"$(GCC_STANDALONE_TOOLCHAIN_HASH_URL)" "$$sidecar" \
-			>> $(GCC_STANDALONE_TOOLCHAIN_HASH_FILE); \
-		echo ">>> gcc-standalone-toolchain: appended hash for $(GCC_STANDALONE_TOOLCHAIN_TARBALL)"; \
-	fi
-endef
-GCC_STANDALONE_TOOLCHAIN_PRE_DOWNLOAD_HOOKS += GCC_STANDALONE_TOOLCHAIN_FETCH_HASH
 
 $(eval $(generic-package))

@@ -11,11 +11,18 @@ full image build (gcc-standalone-toolchain last among those;
 uutils-coreutils is excluded so it can overlay BusyBox applets at
 normal order).
 
-`getBuildroot.sh --update-kernel-support` is a separate action: it
-bumps 2026.08 `BR2_LINUX_KERNEL_LATEST_VERSION` from 7.1.13 to 7.2.9
-and adds matching `BR2_KERNEL_HEADERS_7_2` /
-`BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2` Kconfig so glibc stays enabled.
-It is not part of `--customize`.
+`--customize` also installs `package/fetch-hash.mk` so any package
+tarball missing a sha256 line gets one from a published sums URL or
+from hashing the downloaded archive. `getBuildroot.sh
+--update-kernel-support` is a separate action: it bumps 2026.08
+`BR2_LINUX_KERNEL_LATEST_VERSION` from 7.1.13 to 7.2.9 and adds
+matching `BR2_KERNEL_HEADERS_7_2` / `BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2`
+Kconfig so glibc stays enabled. It also installs fetch-hash.mk so a
+kernel-only bump still hashes `linux-7.2.9.tar.xz`. It is not part of
+`--customize`. `getBuildroot.sh --update-rust-version` is likewise
+separate: it writes `RUST_VERSION` into rust.mk and rust-bin.mk and
+`RUST_BINDGEN_VERSION` into rust-bindgen.mk. Blank env vars skip that
+patch. It is not part of `--customize`.
 
 Custom packages are not copied into `package/<name>/`.
 `compileBuildroot.sh` exports `BR2_EXTERNAL` so Buildroot sources
@@ -33,6 +40,8 @@ from customizeBuildroot.patches.custom_late import (
     iter_custom_packages,
     write_custom_late_mk,
 )
+from customizeBuildroot.patches.fetch_hash import write_fetch_hash_mk
+from customizeBuildroot.patches.host_rust import update_rust_version
 from customizeBuildroot.patches.kernel_support import update_kernel_support
 from customizeBuildroot.patches.linux_pam import (
     patch_linux_pam_config_in,
@@ -140,6 +149,7 @@ def customize_buildroot(
 
     packages = iter_custom_packages(custom_dir)
     write_custom_late_mk(br_path, packages)
+    write_fetch_hash_mk(br_path)
     patch_config_in(config_in)
     patch_makefile(makefile)
     patch_linux_tools(br_path / "package" / "linux-tools")
@@ -162,7 +172,9 @@ def main(argv: list[str] | None = None) -> int:
             "Patch extracted Buildroot sources for man/docs retention, "
             "stock-package compile fixes, and late custom-package install. "
             "Use --update-kernel-support alone to bump latest kernel/headers "
-            "from 7.1.13 to 7.2.9."
+            "from 7.1.13 to 7.2.9. Use --update-rust-version alone to set "
+            "rust/rust-bin from RUST_VERSION and rust-bindgen from "
+            "RUST_BINDGEN_VERSION."
         )
     )
     parser.add_argument(
@@ -180,17 +192,30 @@ def main(argv: list[str] | None = None) -> int:
             "package/custom-late.mk (default: BUILDROOT_CONF_DIR/custom_package)"
         ),
     )
-    parser.add_argument(
+    exclusive = parser.add_mutually_exclusive_group()
+    exclusive.add_argument(
         "--update-kernel-support",
         action="store_true",
         help=(
             "Patch 2026.08 Kconfig so BR2_LINUX_KERNEL_LATEST_VERSION is "
-            "Linux 7.2.9 with matching headers. Does not run --customize."
+            "Linux 7.2.9 with matching headers. Does not run with --customize."
+        ),
+    )
+    exclusive.add_argument(
+        "--update-rust-version",
+        action="store_true",
+        help=(
+            "Set rust and rust-bin from RUST_VERSION, and rust-bindgen "
+            "from RUST_BINDGEN_VERSION. Blank env vars skip that patch. "
+            "Does not run with --customize."
         ),
     )
     args = parser.parse_args(argv)
     if args.update_kernel_support:
         update_kernel_support(args.br_path)
+        return 0
+    if args.update_rust_version:
+        update_rust_version(args.br_path)
         return 0
     customize_buildroot(args.br_path, args.custom_package_dir)
     return 0

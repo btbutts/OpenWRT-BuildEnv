@@ -16,6 +16,7 @@ UPGRADE_FLAG=false
 FORCE_FLAG=false
 CUSTOMIZE_FLAG=false
 UPDATE_KERNEL_FLAG=false
+UPDATE_RUST_FLAG=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -U|--upgrade)
@@ -32,6 +33,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --update-kernel-support)
             UPDATE_KERNEL_FLAG=true
+            shift
+            ;;
+        --update-rust-version)
+            UPDATE_RUST_FLAG=true
             shift
             ;;
         *)
@@ -140,12 +145,38 @@ update_kernel_support() {
         --update-kernel-support
 }
 
+update_rust_version() {
+    if [ ! -f "$CUSTOMIZER" ]; then
+        printf '%s\n' "Error: customizeBuildroot/main.py not found at ${CUSTOMIZER}" >&2
+        return 1
+    fi
+    if [ ! -f "${BUILDROOT_BUILDER_DIR%/}/Config.in" ]; then
+        printf '%s\n' "Error: Buildroot is not extracted at ${BUILDROOT_BUILDER_DIR%/} (missing Config.in)." >&2
+        return 1
+    fi
+    printf '%s\n' "--> Updating rust/rust-bin/rust-bindgen versions via ${CUSTOMIZER}..."
+    run_customizer \
+        --br-path "${BUILDROOT_BUILDER_DIR%/}" \
+        --update-rust-version
+}
+
 if [ "$UPDATE_KERNEL_FLAG" = true ]; then
-    if [ "$CUSTOMIZE_FLAG" = true ] || [ "$UPGRADE_FLAG" = true ] || [ "$FORCE_FLAG" = true ]; then
+    if [ "$CUSTOMIZE_FLAG" = true ] || [ "$UPGRADE_FLAG" = true ] || [ "$FORCE_FLAG" = true ] \
+        || [ "$UPDATE_RUST_FLAG" = true ]; then
         printf '%s\n' "Error: --update-kernel-support must be used by itself." >&2
         exit 1
     fi
     update_kernel_support
+    exit 0
+fi
+
+if [ "$UPDATE_RUST_FLAG" = true ]; then
+    if [ "$CUSTOMIZE_FLAG" = true ] || [ "$UPGRADE_FLAG" = true ] || [ "$FORCE_FLAG" = true ] \
+        || [ "$UPDATE_KERNEL_FLAG" = true ]; then
+        printf '%s\n' "Error: --update-rust-version must be used by itself." >&2
+        exit 1
+    fi
+    update_rust_version
     exit 0
 fi
 

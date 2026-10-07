@@ -3,8 +3,8 @@
 Patch an extracted Buildroot tree for this installer.
 
 Public API used by tests (`import customizeBuildroot as cb`) and by
-`customizeBuildroot/main.py` when `getBuildroot.sh` runs --customize
-or --update-kernel-support.
+`customizeBuildroot/main.py` when `getBuildroot.sh` runs --customize,
+--update-kernel-support, or --update-rust-version.
 """
 
 from .main import (
@@ -16,6 +16,7 @@ from .main import (
     patch_package_version_overrides,
 )
 from .patches.custom_late import LATE_CUSTOM_SKIP_PACKAGES
+from .patches.host_rust import update_rust_version
 from .patches.kernel_support import update_kernel_support
 from .patches.linux_tools import (
     PCI_BUILD_CMDS_OLD,
@@ -51,4 +52,5 @@ __all__ = [
     "patch_openvmtools",
     "patch_package_version_overrides",
     "update_kernel_support",
+    "update_rust_version",
 ]

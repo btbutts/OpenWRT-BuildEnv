@@ -27,10 +27,10 @@ RUN sed -i '/^Components:/ s/$/ non-free/' \
     bc binutils-gold bison ccache ecj fastjar flex \
     build-essential gcc g++ help2man texinfo vim nano \
     libbsd-dev libelf-dev libncurses-dev zlib1g-dev \
-    ncurses-dev python3 bzip2 ca-certificates \
+    ncurses-dev python3 bzip2 ca-certificates python3-pip \
     liblzma-dev mtd-utils meson mold ninja-build \
     pigz pkg-config python3-dev subversion swig dialog \
-    gettext libssl-dev xsltproc wget unzip \
+    gettext libssl-dev xsltproc wget unzip python3-configobj \
     grub-common dosfstools time rsync gawk file \
     python3-setuptools curl net-tools bind9-dnsutils \
     git iputils-ping traceroute mtr rclone zstd \
@@ -42,6 +42,9 @@ RUN sed -i '/^Components:/ s/$/ non-free/' \
     python3-matplotlib python3-numpy python3-flake8 \
     && apt-get clean && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/run/sshd
+
+# Install pymake from github.com/linuxlizard/pymake
+#RUN pip3 install --break-system-packages git+https://github.com/linuxlizard/pymake
 
 # Copy local LLVM installation script, execute, and clean up
 COPY resources/llvm.sh /tmp/llvm.sh

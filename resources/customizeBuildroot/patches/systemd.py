@@ -9,7 +9,6 @@ from ..util import (
     drop_br_no_check_hash_for,
     insert_before_meson_eval,
     insert_kconfig_after_if,
-    tarball_fetch_hash_fragment,
     write_if_changed,
 )
 
@@ -22,12 +21,11 @@ SYSTEMD_VERSION_OVERRIDE_KCONFIG = (
     "\t  in 2026.08). Set to a release tag without the leading\n"
     '\t  "v", for example 262, to download that version instead.\n'
     "\n"
-    "\t  When set, a PRE_DOWNLOAD_HOOK appends a sha256 line for\n"
-    "\t  that tarball to systemd.hash if one is not already\n"
-    "\t  present (same JIT hash as hexedit/sharutils). systemd\n"
-    "\t  260+ dropped SysV meson options; 262 also dropped libidn\n"
-    "\t  and libiptc. The makefile strips those -D flags when an\n"
-    "\t  override is set so meson configure can succeed.\n"
+    "\t  systemd 260+ dropped SysV meson options; 262 also dropped\n"
+    "\t  libidn and libiptc. The makefile strips those -D flags\n"
+    "\t  when an override is set so meson configure can succeed.\n"
+    "\t  Missing tarball sha256 lines are filled by\n"
+    "\t  package/fetch-hash.mk.\n"
 )
 
 SYSTEMD_VERSION_OVERRIDE_MK = (
@@ -59,14 +57,6 @@ SYSTEMD_OVERRIDE_MK_TAIL_LEGACY = (
 
 SYSTEMD_OVERRIDE_MK_TAIL = (
     "\n"
-    "ifneq ($(call qstrip,$(BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE)),)\n"
-    + tarball_fetch_hash_fragment(
-        "SYSTEMD",
-        "systemd.hash",
-        "Buildroot-systemd",
-        host_hooks=True,
-    )
-    + "\n"
     "# systemd 260+ dropped SysV meson options; 262 also dropped libidn "
     "and libiptc.\n"
     "ifneq ($(SYSTEMD_VERSION),$(SYSTEMD_VERSION_STOCK))\n"
@@ -80,7 +70,6 @@ SYSTEMD_OVERRIDE_MK_TAIL = (
     "-Dlibidn=enabled -Dlibidn=disabled "
     "-Dlibiptc=enabled -Dlibiptc=disabled,"
     "$(HOST_SYSTEMD_CONF_OPTS))\n"
-    "endif\n"
     "endif\n"
 )
 
@@ -108,9 +97,9 @@ def patch_systemd_mk(path: Path) -> None:
     Honor ``BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE`` in systemd.mk.
 
     Empty override keeps the packaged ``SYSTEMD_VERSION``. A set override
-    registers ``SYSTEMD_FETCH_HASH`` so the tarball sha256 is appended to
-    systemd.hash when missing, and drops meson ``-D`` flags that systemd
-    260+ / 262 removed (SysV paths, libidn, libiptc).
+    drops meson ``-D`` flags that systemd 260+ / 262 removed (SysV
+    paths, libidn, libiptc). Missing tarball hashes are filled by
+    ``package/fetch-hash.mk``.
     """
     text = path.read_text()
     original = text
@@ -133,7 +122,7 @@ def patch_systemd_mk(path: Path) -> None:
     text = insert_before_meson_eval(
         text,
         SYSTEMD_OVERRIDE_MK_TAIL,
-        "SYSTEMD_PRE_DOWNLOAD_HOOKS += SYSTEMD_FETCH_HASH",
+        "SYSTEMD_CONF_OPTS := $(filter-out",
     )
     write_if_changed(
         path,

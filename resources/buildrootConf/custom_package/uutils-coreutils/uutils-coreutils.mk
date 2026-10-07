@@ -11,10 +11,6 @@ endif
 
 UUTILS_COREUTILS_SITE = $(call github,uutils,coreutils,$(UUTILS_COREUTILS_VERSION))
 UUTILS_COREUTILS_SOURCE = coreutils-$(UUTILS_COREUTILS_VERSION).tar.gz
-UUTILS_COREUTILS_TAGS_URL = https://api.github.com/repos/uutils/coreutils/tags?per_page=100
-# Immediate assignment: recursive $(MAKEFILE_LIST) at download time is
-# docs/manual/, not this package. Buildroot reads hashes from PKGDIR.
-UUTILS_COREUTILS_HASH_FILE := $(dir $(lastword $(MAKEFILE_LIST)))uutils-coreutils.hash
 
 UUTILS_COREUTILS_LICENSE = MIT
 UUTILS_COREUTILS_LICENSE_FILES = LICENSE
@@ -25,6 +21,10 @@ UUTILS_COREUTILS_CARGO_PROFILE = release
 
 # feat_os_unix applets (Cargo.toml unix -> feat_os_unix). Keep in sync
 # with 0.12.0; a missing symlink is easier to add than a dangling one.
+# 0.12.0 has no b3sum, hashsum, sha3-*sum, shake*sum, or relpath
+# crates. Those mailing-list names are either later than 0.12.0 or
+# reachable as `cksum --algorithm`. `[` is the `test` applet and is
+# installed separately (it is not a crate name).
 UUTILS_COREUTILS_APPLETS = \
 	arch b2sum base32 base64 basename basenc cat chgrp chmod chown chroot \
 	cksum comm cp csplit cut date dd df dir dircolors dirname du echo env \
@@ -36,8 +36,23 @@ UUTILS_COREUTILS_APPLETS = \
 	tee test timeout touch tr true truncate tsort tty uname unexpand uniq \
 	unlink uptime users vdir wc who whoami yes
 
+UUTILS_COREUTILS_CARGO_FEATURES = unix
+
+# feat_selinux is optional: compile chcon/runcon only when libselinux
+# is already in the image. Do not list libselinux as a required dep.
+ifeq ($(BR2_PACKAGE_LIBSELINUX),y)
+UUTILS_COREUTILS_DEPENDENCIES += libselinux
+UUTILS_COREUTILS_CARGO_FEATURES += feat_selinux
+UUTILS_COREUTILS_APPLETS += chcon runcon
+endif
+
 ifeq ($(BR2_PACKAGE_BUSYBOX),y)
 UUTILS_COREUTILS_DEPENDENCIES += busybox
+endif
+
+ifeq ($(BR2_PACKAGE_UUTILS_COREUTILS_INDIVIDUAL_BINARIES),y)
+UUTILS_COREUTILS_CARGO_PACKAGES = \
+	$(foreach applet,$(UUTILS_COREUTILS_APPLETS),-p uu_$(applet))
 endif
 
 define UUTILS_COREUTILS_BUILD_CMDS
@@ -50,9 +65,22 @@ define UUTILS_COREUTILS_BUILD_CMDS
 		--manifest-path Cargo.toml \
 		--locked \
 		--profile=$(UUTILS_COREUTILS_CARGO_PROFILE) \
-		--features unix
+		$(addprefix --features ,$(UUTILS_COREUTILS_CARGO_FEATURES)) \
+		$(UUTILS_COREUTILS_CARGO_PACKAGES)
 endef
 
+ifeq ($(BR2_PACKAGE_UUTILS_COREUTILS_INDIVIDUAL_BINARIES),y)
+define UUTILS_COREUTILS_INSTALL_TARGET_CMDS
+	$(foreach applet,$(UUTILS_COREUTILS_APPLETS), \
+		$(INSTALL) -D -m 0755 \
+			$(@D)/target/$(RUSTC_TARGET_NAME)/$(UUTILS_COREUTILS_CARGO_PROFILE)/$(applet) \
+			$(TARGET_DIR)/usr/bin/$(applet)
+	)
+	$(INSTALL) -D -m 0755 \
+		$(@D)/target/$(RUSTC_TARGET_NAME)/$(UUTILS_COREUTILS_CARGO_PROFILE)/test \
+		$(TARGET_DIR)/usr/bin/[
+endef
+else
 define UUTILS_COREUTILS_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 \
 		$(@D)/target/$(RUSTC_TARGET_NAME)/$(UUTILS_COREUTILS_CARGO_PROFILE)/coreutils \
@@ -62,43 +90,6 @@ define UUTILS_COREUTILS_INSTALL_TARGET_CMDS
 	done
 	ln -sf coreutils $(TARGET_DIR)/usr/bin/[
 endef
-
-# If uutils-coreutils.hash already has a sha256 line for this tarball, do
-# nothing. Otherwise verify the GitHub tag, hash that one archive, and
-# append the line (JIT, only the version being installed).
-define UUTILS_COREUTILS_FETCH_HASH
-	mkdir -p $(dir $(UUTILS_COREUTILS_HASH_FILE))
-	if [ ! -f $(UUTILS_COREUTILS_HASH_FILE) ]; then \
-		printf '%s\n' \
-			'#' \
-			'# Automatically generated file; DO NOT EDIT.' \
-			'#' \
-			> $(UUTILS_COREUTILS_HASH_FILE); \
-	fi
-	if ! awk -v f="$(UUTILS_COREUTILS_SOURCE)" \
-		'$$1 == "sha256" && $$NF == f { found = 1 } END { exit !found }' \
-		$(UUTILS_COREUTILS_HASH_FILE); then \
-		tags=$$(wget -qO- --header='User-Agent: Buildroot-uutils-coreutils' \
-			--header='Accept: application/vnd.github+json' \
-			"$(UUTILS_COREUTILS_TAGS_URL)") || tags=""; \
-		if ! echo "$$tags" | grep -qF '"name":"$(UUTILS_COREUTILS_VERSION)"' && \
-		   ! echo "$$tags" | grep -qF '"name": "$(UUTILS_COREUTILS_VERSION)"'; then \
-			echo "ERROR: uutils-coreutils: tag '$(UUTILS_COREUTILS_VERSION)' not found at $(UUTILS_COREUTILS_TAGS_URL)" >&2; \
-			exit 1; \
-		fi; \
-		tmp=$$(mktemp); \
-		if ! wget -qO "$$tmp" --header='User-Agent: Buildroot-uutils-coreutils' \
-			"$(UUTILS_COREUTILS_SITE)/$(UUTILS_COREUTILS_SOURCE)"; then \
-			rm -f "$$tmp"; \
-			echo "ERROR: uutils-coreutils: failed to download $(UUTILS_COREUTILS_SITE)/$(UUTILS_COREUTILS_SOURCE)" >&2; \
-			exit 1; \
-		fi; \
-		sum=$$(sha256sum "$$tmp" | awk '{print $$1}'); \
-		rm -f "$$tmp"; \
-		printf 'sha256  %s  %s\n' "$$sum" "$(UUTILS_COREUTILS_SOURCE)" \
-			>> $(UUTILS_COREUTILS_HASH_FILE); \
-	fi
-endef
-UUTILS_COREUTILS_PRE_DOWNLOAD_HOOKS += UUTILS_COREUTILS_FETCH_HASH
+endif
 
 $(eval $(cargo-package))

@@ -16,6 +16,31 @@ BUILDROOT_OVERLAY_DIR="${BUILDROOT_CONF_DIR%/}/rootfs-overlay"
 BUILDROOT_CCACHE_DIR="${BUILDROOT_BUILDER_DIR%/}/.buildroot-ccache"
 BUILDROOT_OUTPUT_DIR="${BUILDROOT_OUTPUT_DIR%/}"
 
+# Define Usage Functions
+_usage() {
+    printf '%s\n%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n' \
+        "Usage: $0 [options]" \
+        "Options:" \
+        "--rebuild-linux-firmware          Rebuild the Linux firmware." \
+        "--rebuild-linux-firmware-clean    Clean and rebuild the Linux firmware." \
+        "--compiler-cache-clean            Clean the compiler cache." \
+        "--rebuild-app <package>           Rebuild the specified application package." \
+        "--rebuild-linux-toolchain         Rebuild the Linux toolchain." \
+        "--copy-only                       Copy only, without building." \
+        "--target-finalize-clean           Clean the target finalize directory." \
+        "--resume                          Resume the previous build." \
+        "--set-mirrors <mirror_assignment> Set mirror assignment(s)." \
+        "--help, -h                        Show this help message."
+}
+# --set-mirrors usage
+_mirrors_usage() {
+    printf '%s\n\t%s%s\n\t%s\n\t%s\n' \
+        "Usage:" \
+        "$1 BR2_GNU_MIRROR=\"https://mirrors.ocf.berkeley.edu/gnu\"" \
+        " BR2_KERNEL_MIRROR=\"https://cdn.kernel.org/pub\"" \
+        "$1 BR2_GNU_MIRROR=\"https://mirrors.ocf.berkeley.edu/gnu\"" \
+        "$1=BR2_KERNEL_MIRROR=\"https://cdn.kernel.org/pub\"" >&2
+}
 REBUILD_LINUX=0
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -35,26 +60,39 @@ while [ $# -gt 0 ]; do
         --copy-only) COPY_ONLY=1; shift ;;
         --target-finalize-clean) RM_TARGET_FINALIZE=1; shift ;;
         --resume) RESUME=1; shift ;;
-        --set-mirrors)
-            if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
-                if [ -n "$ZSH_VERSION" ]; then
-                    eval 'emulate bash -c "BR_MIRRORS=\($2\)"'
-                else
-                    eval "BR_MIRRORS=($2)"
+        --set-mirrors|--set-mirrors=*)
+            active_arg="$1"
+            args="$*"
+            if [ "${1#*=}" != "$1" ]; then
+                inline_val="${1#*=}"
+                if [[ "$inline_val" == *"="* ]]; then
+                    BR_MIRRORS+=("$inline_val")
                 fi
-                shift 2
-            else
-                printf '%s\n%s\n\t%s%s%s\n\t%s%s\n' \
-                    "Error: --set-mirrors requires a single-quoted mirror assignment string!" \
-                    "Examples:" \
-                    "--set-mirrors" \
-                    " 'BR2_GNU_MIRROR=\"https://mirrors.ocf.berkeley.edu/gnu\"" \
-                    " BR2_KERNEL_MIRROR=\"https://cdn.kernel.org/pub'\"" \
-                    "--set-mirrors" \
-                    " 'BR2_GNU_MIRROR=\"https://mirrors.ocf.berkeley.edu/gnu\"'" >&2
+            fi
+            shift
+            # Greedily consume subsequent tokens after arg
+            while [ $# -gt 0 ]; do
+                if [ "${1:0:1}" = "-" ]; then
+                    # Stop when next item is a flag beginning with a '-'
+                    break
+                elif [[ "$1" == *"="* ]]; then
+                    # Add to array if valid mirror assignment string contains '='
+                    BR_MIRRORS+=("$1")
+                    shift
+                else
+                    printf '%s\n' "Error: Invalid mirror assignment: $1" >&2
+                    _mirrors_usage "$args"
+                    exit 1
+                fi
+            done
+            if [ ${#BR_MIRRORS[@]} -eq 0 ]; then
+                printf '%s\n' \
+                    "Error: $active_arg requires a single-quoted mirror assignment string!"
+                _mirrors_usage "$args"
                 exit 1
             fi
             ;;
+        --help|-h) _usage "$@"; exit 0 ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -141,7 +179,7 @@ if [[ "${COPY_ONLY}" -eq 1 ]]; then
     # BR2_PACKAGE_SHARUTILS_VERSION) without prompting. Without this,
     # make busybox-menuconfig runs oldaskconfig and asks (NEW).
     cd "${BUILDROOT_BUILDER_DIR%/}"
-    make installer_defconfig
+    make BR2_EXTERNAL="$BR2_EXTERNAL" installer_defconfig
     printf '%s\n' "--> Applied installer_defconfig (Kconfig defaults filled in silently)"
     exit 0
 fi
@@ -341,7 +379,7 @@ fi
 mkdir -p "${BUILDROOT_CCACHE_DIR:?}"
 if [ -f "${BUILDROOT_CONF_DIR%/}/setup.config" ]; then
     run_copy_kconfig
-    make installer_defconfig > /dev/null 2>&1
+    make BR2_EXTERNAL="$BR2_EXTERNAL" installer_defconfig > /dev/null 2>&1
     make olddefconfig > /dev/null 2>&1
     printf '%s%s\n' "--> Configuration from ${BUILDROOT_CONF_DIR%/}/setup.config " \
         "applied to ${BUILDROOT_BUILDER_DIR%/}/.config"

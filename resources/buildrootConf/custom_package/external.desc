@@ -1,2 +1,2 @@
-name: OPENWRT_INSTALLER
+name: OPENWRT_INSTALLER_CUSTOM_PACKAGE
 desc: OpenWRT USB installer custom packages
