@@ -294,6 +294,8 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             "gcc-standalone-toolchain",
             "groff",
             "hexedit",
+            "jaq",
+            "python-uv",
             "sharutils",
             "sudo-rs",
             "uutils-coreutils",
@@ -360,6 +362,8 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             "sudo-rs",
             "fdfind",
             "brush",
+            "jaq",
+            "python-uv",
         ):
             pkg_mk = (self.ROOT / name / f"{name}.mk").read_text()
             self.assertNotIn("FETCH_HASH", pkg_mk)

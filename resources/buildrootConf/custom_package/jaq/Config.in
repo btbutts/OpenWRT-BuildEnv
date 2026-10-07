@@ -1,0 +1,34 @@
+config BR2_PACKAGE_JAQ
+	bool "jaq"
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	depends on BR2_USE_MMU
+	select BR2_PACKAGE_HOST_RUSTC
+	help
+	  jq clone written in Rust (01mf02/jaq). Installs /usr/bin/jaq.
+
+	  When BR2_PACKAGE_JQ is not enabled, /usr/bin/jq is installed
+	  as a symlink to jaq so legacy jq invocations still resolve.
+	  jaq is mostly, not fully, jq compatible: number handling,
+	  some builtins, and error text differ.
+
+	  jaq is independent of BR2_PACKAGE_JQ and may coexist with it.
+
+	  https://github.com/01mf02/jaq
+
+if BR2_PACKAGE_JAQ
+
+config BR2_PACKAGE_JAQ_VERSION
+	string "jaq version (GitHub tag without v)"
+	default "3.1.1"
+	help
+	  GitHub tag from 01mf02/jaq without the leading v, for
+	  example 3.1.1. Leave this unset to use that default.
+
+	  If jaq.hash does not yet list that tag's tarball, its
+	  sha256 is appended at download time.
+
+endif
+
+comment "jaq needs host rustc"
+	depends on BR2_USE_MMU
+	depends on !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
