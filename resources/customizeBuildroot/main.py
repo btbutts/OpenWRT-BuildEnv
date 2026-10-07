@@ -3,7 +3,7 @@
 Patch an extracted Buildroot tree for this installer.
 
 Keeps man/docs when requested and drops small patches into stock
-Buildroot package dirs (openvmtools C23, linux-tools PCI, optional
+Buildroot package dirs (openvmtools C23, espflash bail!, linux-tools PCI, optional
 systemd/linux-pam version overrides) during `getBuildroot.sh
 --customize`. Writes `package/custom-late.mk` so br2-external
 packages under `buildrootConf/custom_package/` install last on a
@@ -39,6 +39,11 @@ from pathlib import Path
 from customizeBuildroot.patches.custom_late import (
     iter_custom_packages,
     write_custom_late_mk,
+)
+from customizeBuildroot.patches.espflash import (
+    patch_espflash,
+    patch_espflash_config_in,
+    patch_espflash_mk,
 )
 from customizeBuildroot.patches.fetch_hash import write_fetch_hash_mk
 from customizeBuildroot.patches.host_rust import update_rust_version
@@ -92,7 +97,7 @@ DEFAULT_BR_PATH = default_br_path()
 
 def patch_package_version_overrides(br_path: Path) -> None:
     """
-    Add optional systemd and linux-pam version-override Kconfig/makefile.
+    Add optional systemd, linux-pam and espflash version-override Kconfig/makefile.
 
     Missing package dirs are a no-op (unit-test fixtures). Empty override
     strings keep Buildroot's packaged versions.
@@ -107,6 +112,11 @@ def patch_package_version_overrides(br_path: Path) -> None:
     if pam_cfg.is_file() and pam_mk.is_file():
         patch_linux_pam_config_in(pam_cfg)
         patch_linux_pam_mk(pam_mk)
+    espflash_cfg = br_path / "package" / "espflash" / "Config.in"
+    espflash_mk = br_path / "package" / "espflash" / "espflash.mk"
+    if espflash_cfg.is_file() and espflash_mk.is_file():
+        patch_espflash_config_in(espflash_cfg)
+        patch_espflash_mk(espflash_mk)
 
 
 def customize_buildroot(
@@ -120,9 +130,11 @@ def customize_buildroot(
     Inserts BR2_KEEP_MAN_PAGES_DOCS, wraps the man/doc purge, patches
     linux-tools ``*.mk.in`` so PCI follows kernel 6.14+ pci_endpoint,
     writes the GCC 15 / C23 ul.c fix into stock
-    ``package/openvmtools/``, and adds empty-default
+    ``package/openvmtools/``, the espflash 4.0.1 ``bail!`` fix into
+    ``package/espflash/4.0.1/``, and adds empty-default
     ``BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE`` /
-    ``BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE`` so a fragment can pick
+    ``BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE`` (and
+    ``BR2_PACKAGE_ESPFLASH_VERSION_OVERRIDE``, default 4.0.1) so a fragment can pick
     systemd 262 or linux-pam 1.7.3 without changing packaged
     defaults. Scans *custom_package_dir* and writes
     ``package/custom-late.mk`` so those packages install last on a
@@ -154,6 +166,7 @@ def customize_buildroot(
     patch_makefile(makefile)
     patch_linux_tools(br_path / "package" / "linux-tools")
     patch_openvmtools(br_path / "package" / "openvmtools")
+    patch_espflash(br_path / "package" / "espflash")
     patch_package_version_overrides(br_path)
     print("--> customizeBuildroot completed successfully.")
 

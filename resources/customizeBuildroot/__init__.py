@@ -16,6 +16,13 @@ from .main import (
     patch_package_version_overrides,
 )
 from .patches.custom_late import LATE_CUSTOM_SKIP_PACKAGES
+from .patches.espflash import (
+    ESPFLASH_BAIL_PATCH,
+    ESPFLASH_STOCK_VERSION,
+    patch_espflash,
+    patch_espflash_config_in,
+    patch_espflash_mk,
+)
 from .patches.host_rust import update_rust_version
 from .patches.kernel_support import update_kernel_support
 from .patches.linux_tools import (
@@ -35,6 +42,8 @@ from .util import kconfig_package_symbol
 
 __all__ = [
     "DEFAULT_BR_PATH",
+    "ESPFLASH_BAIL_PATCH",
+    "ESPFLASH_STOCK_VERSION",
     "LATE_CUSTOM_SKIP_PACKAGES",
     "OPENVMTOOLS_C23_NEW",
     "OPENVMTOOLS_C23_OLD",
@@ -48,6 +57,9 @@ __all__ = [
     "main",
     "patch_linux_tool_pci_mk_in",
     "patch_linux_tools_grep_install",
+    "patch_espflash",
+    "patch_espflash_config_in",
+    "patch_espflash_mk",
     "patch_makefile",
     "patch_openvmtools",
     "patch_package_version_overrides",

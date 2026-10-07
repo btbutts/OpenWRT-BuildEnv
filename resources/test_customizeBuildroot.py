@@ -4,15 +4,22 @@
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import os
 import shutil
+import socket
+import socketserver
+import subprocess
 import sys
 import tempfile
+import threading
 import unittest
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from typing import Self
 
 import customizeBuildroot as cb
 
@@ -226,6 +233,7 @@ class CustomPackageInstallTests(unittest.TestCase):
         self.assertIn("include package/custom-late.mk", makefile)
         self.assertIn("include package/fetch-hash.mk", makefile)
         self.assertTrue((self.br / "package" / "fetch-hash.mk").is_file())
+        self.assertTrue((self.br / "package" / "fetch_hash_helper.py").is_file())
         self.assertEqual(
             cb.kconfig_package_symbol("gcc-standalone-toolchain"),
             "BR2_PACKAGE_GCC_STANDALONE_TOOLCHAIN",
@@ -281,6 +289,7 @@ class Br2ExternalLayoutTests(unittest.TestCase):
         text = (self.ROOT / "Config.in").read_text()
         self.assertIn('menu "Custom Packages"', text)
         for name in (
+            "brush",
             "fdfind",
             "gcc-standalone-toolchain",
             "groff",
@@ -350,6 +359,7 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             "gcc-standalone-toolchain",
             "sudo-rs",
             "fdfind",
+            "brush",
         ):
             pkg_mk = (self.ROOT / name / f"{name}.mk").read_text()
             self.assertNotIn("FETCH_HASH", pkg_mk)
@@ -388,6 +398,44 @@ class Br2ExternalLayoutTests(unittest.TestCase):
         self.assertNotIn("ln -sf", mk)
         self.assertNotIn("host-cargo", mk)
         self.assertIn("$(call github,sharkdp,fd,v$(FDFIND_VERSION))", mk)
+
+    def test_brush_package(self) -> None:
+        """brush builds crate brush-shell, installs /usr/bin/brush, and fetches docs."""
+        text = (self.ROOT / "brush" / "Config.in").read_text(encoding="utf-8")
+        self.assertIn("config BR2_PACKAGE_BRUSH", text)
+        self.assertIn("select BR2_PACKAGE_HOST_RUSTC", text)
+        self.assertIn('default "0.4.0"', text)
+        self.assertIn("config BR2_PACKAGE_BRUSH_DOCS", text)
+        self.assertIn("default y", text)
+        mk = (self.ROOT / "brush" / "brush.mk").read_text(encoding="utf-8")
+        self.assertIn(
+            "$(call github,reubeno,brush,brush-shell-v$(BRUSH_VERSION))", mk
+        )
+        self.assertIn("BRUSH_SOURCE = brush-$(BRUSH_VERSION).tar.gz", mk)
+        self.assertIn("--manifest-path brush-shell/Cargo.toml", mk)
+        self.assertIn("$(TARGET_DIR)/usr/bin/brush", mk)
+        self.assertIn("BRUSH_CARGO_PROFILE = release", mk)
+        self.assertNotIn("--features", mk)
+        self.assertNotIn("host-cargo", mk)
+        self.assertNotIn("FETCH_HASH", mk)
+        self.assertIn(
+            "releases/download/brush-shell-v$(BRUSH_VERSION)/brush-docs.tar.gz",
+            mk,
+        )
+        self.assertIn("docs-extracted/man/brush.1", mk)
+        self.assertIn("$(TARGET_DIR)/usr/share/man/man1/brush.1", mk)
+        self.assertIn("docs-extracted/md/brush.md", mk)
+        self.assertIn("$(TARGET_DIR)/usr/share/doc/brush/brush.md", mk)
+        self.assertIn("ifeq ($(BR2_PACKAGE_BRUSH_DOCS),y)", mk)
+        self.assertNotIn("docs-extracted/*.1", mk)
+        self.assertEqual(cb.kconfig_package_symbol("brush"), "BR2_PACKAGE_BRUSH")
+        self.assertNotIn("brush", cb.LATE_CUSTOM_SKIP_PACKAGES)
+        setup = (
+            Path(__file__).resolve().parent / "buildrootConf" / "setup.config"
+        ).read_text(encoding="utf-8")
+        self.assertIn("BR2_PACKAGE_BRUSH=y", setup)
+        self.assertIn('BR2_PACKAGE_BRUSH_VERSION="0.4.0"', setup)
+        self.assertIn('BR2_SYSTEM_BIN_SH="bash"', setup)
 
 
 class PatchLinuxToolsTests(unittest.TestCase):
@@ -516,6 +564,219 @@ class PatchOpenvmtoolsTests(unittest.TestCase):
         written = ovm / "0015-c23-MXUserTryAcquireForceFail.patch"
         self.assertTrue(written.is_file())
         self.assertIn(cb.OPENVMTOOLS_C23_NEW, written.read_text())
+
+
+_ESPFLASH_DEFMT_4_0_1 = """\
+        let table = match Table::parse(elf) {
+            Ok(Some(table)) => table,
+            Ok(None) => bail!(DefmtError::NoDefmtData),
+            Err(e) => return Err(DefmtError::TableParseFailed).with_context(|| e),
+        };
+"""
+
+
+_ESPFLASH_CONFIG_2026_08 = """\
+config BR2_PACKAGE_ESPFLASH
+\tbool "espflash"
+\tdepends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+\tdepends on BR2_PACKAGE_HAS_UDEV
+\tselect BR2_PACKAGE_HOST_RUSTC
+\thelp
+\t  Serial flasher utilities for Espressif devices.
+
+\t  https://github.com/esp-rs/espflash
+
+comment "espflash needs udev /dev management"
+\tdepends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+\tdepends on !BR2_PACKAGE_HAS_UDEV
+"""
+
+_ESPFLASH_MK_2026_08 = """\
+################################################################################
+#
+# espflash
+#
+################################################################################
+
+ESPFLASH_VERSION = 4.0.1
+ESPFLASH_SITE = $(call github,esp-rs,espflash,v$(ESPFLASH_VERSION))
+ESPFLASH_SUBDIR = espflash
+
+$(eval $(cargo-package))
+"""
+
+
+class PatchEspflashTests(unittest.TestCase):
+    """Stock package/espflash: bail! patch and optional version override."""
+
+    PATCH_NAME = "0001-esp_defmt-bail-in-statement-position.patch"
+
+    def setUp(self) -> None:
+        """Temporary package/espflash directory with the 2026.08 files."""
+        self.td = Path(tempfile.mkdtemp())
+        self.pkg = self.td / "espflash"
+        self.pkg.mkdir()
+        self.config_in = self.pkg / "Config.in"
+        self.mk = self.pkg / "espflash.mk"
+        self.config_in.write_text(_ESPFLASH_CONFIG_2026_08, encoding="utf-8")
+        self.mk.write_text(_ESPFLASH_MK_2026_08, encoding="utf-8")
+
+    def tearDown(self) -> None:
+        """Remove the temp tree."""
+        shutil.rmtree(self.td)
+
+    def test_missing_dir_is_noop(self) -> None:
+        """Incomplete trees and unit fixtures without espflash skip."""
+        self.assertIsNone(cb.patch_espflash(self.td / "missing"))
+
+    def test_writes_first_patch_into_the_version_dir(self) -> None:
+        """Buildroot reads package/espflash/4.0.1/ only while the version is 4.0.1."""
+        expected = self.pkg / "4.0.1" / self.PATCH_NAME
+        self.assertEqual(cb.patch_espflash(self.pkg), expected)
+        text = expected.read_text(encoding="utf-8")
+        self.assertIn("-            Ok(None) => bail!(DefmtError::NoDefmtData),", text)
+        self.assertIn("+                bail!(DefmtError::NoDefmtData);", text)
+        self.assertIn("a/espflash/src/cli/monitor/parser/esp_defmt.rs", text)
+        self.assertEqual(list(self.pkg.glob("*.patch")), [])
+
+    def test_numbering_follows_existing_patches(self) -> None:
+        """An unrelated 0001 patch in the version dir pushes this one to 0002."""
+        (self.pkg / "4.0.1").mkdir()
+        (self.pkg / "4.0.1" / "0001-other.patch").write_text("other\n")
+        self.assertEqual(
+            cb.patch_espflash(self.pkg),
+            self.pkg / "4.0.1" / "0002-esp_defmt-bail-in-statement-position.patch",
+        )
+
+    def test_idempotent(self) -> None:
+        """A second --customize does not add another numbered file."""
+        self.assertIsNotNone(cb.patch_espflash(self.pkg))
+        self.assertIsNone(cb.patch_espflash(self.pkg))
+        self.assertEqual(len(list((self.pkg / "4.0.1").glob("*.patch"))), 1)
+
+    def test_skips_when_hunk_already_present(self) -> None:
+        """Do not add a second copy if the tree already ships the same hunk."""
+        (self.pkg / "4.0.1").mkdir()
+        (self.pkg / "4.0.1" / "0001-upstream.patch").write_text(
+            cb.ESPFLASH_BAIL_PATCH, encoding="utf-8"
+        )
+        self.assertIsNone(cb.patch_espflash(self.pkg))
+        self.assertEqual(len(list((self.pkg / "4.0.1").glob("*.patch"))), 1)
+
+    def test_patch_applies_to_the_4_0_1_source(self) -> None:
+        """The hunk applies with patch -p1 and leaves bail! as a statement."""
+        if shutil.which("patch") is None:
+            self.skipTest("patch is not installed")
+        src = self.td / "src" / "espflash" / "src" / "cli" / "monitor" / "parser"
+        src.mkdir(parents=True)
+        target = src / "esp_defmt.rs"
+        target.write_text(
+            "fn load() {\n" + _ESPFLASH_DEFMT_4_0_1 + "}\n", encoding="utf-8"
+        )
+        dest = cb.patch_espflash(self.pkg)
+        subprocess.run(
+            ["patch", "-p1", "-s", "-i", str(dest)],
+            cwd=self.td / "src",
+            check=True,
+        )
+        fixed = target.read_text(encoding="utf-8")
+        self.assertIn(
+            "            Ok(None) => {\n"
+            "                bail!(DefmtError::NoDefmtData);\n"
+            "            }\n",
+            fixed,
+        )
+        self.assertNotIn("=> bail!(", fixed)
+
+    def test_config_in_adds_the_override_with_the_stock_default(self) -> None:
+        """The Kconfig string defaults to 4.0.1 and sits inside if ESPFLASH."""
+        cb.patch_espflash_config_in(self.config_in)
+        text = self.config_in.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith(_ESPFLASH_CONFIG_2026_08))
+        block = text[text.index("if BR2_PACKAGE_ESPFLASH\n") :]
+        self.assertIn("config BR2_PACKAGE_ESPFLASH_VERSION_OVERRIDE\n", block)
+        self.assertIn('\tstring "espflash version override"\n', block)
+        self.assertIn('\tdefault "4.0.1"\n', block)
+        self.assertTrue(block.endswith("endif\n"))
+        cb.patch_espflash_config_in(self.config_in)
+        self.assertEqual(self.config_in.read_text(encoding="utf-8"), text)
+
+    def test_mk_honors_the_override_between_version_and_site(self) -> None:
+        """espflash.mk keeps ESPFLASH_VERSION and lets the option replace it."""
+        cb.patch_espflash_mk(self.mk)
+        text = self.mk.read_text(encoding="utf-8")
+        stock = text.index("ESPFLASH_VERSION = 4.0.1\n")
+        override = text.index(
+            "ESPFLASH_VERSION = $(call qstrip,"
+            "$(BR2_PACKAGE_ESPFLASH_VERSION_OVERRIDE))"
+        )
+        self.assertLess(stock, override)
+        self.assertLess(override, text.index("ESPFLASH_SITE = "))
+        cb.patch_espflash_mk(self.mk)
+        self.assertEqual(self.mk.read_text(encoding="utf-8"), text)
+
+    def test_mk_without_a_version_line_is_fatal(self) -> None:
+        """A layout change in espflash.mk stops --customize instead of skipping."""
+        self.mk.write_text("ESPFLASH_SITE = x\n", encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            cb.patch_espflash_mk(self.mk)
+
+    def test_override_selects_the_version_under_make(self) -> None:
+        """Unset or empty keeps 4.0.1; a quoted Kconfig string replaces it."""
+        if shutil.which("make") is None:
+            self.skipTest("make is not installed")
+        cb.patch_espflash_mk(self.mk)
+        stub = self.td / "stub.mk"
+        stub.write_text(
+            'qstrip = $(strip $(subst ",,$(1)))\n'
+            "github = gh:$(1)/$(2)/$(3)\n"
+            "cargo-package =\n"
+            f"include {self.mk}\n"
+            "show:\n"
+            "\t@echo $(ESPFLASH_VERSION) $(ESPFLASH_SITE)\n",
+            encoding="utf-8",
+        )
+        cases = [
+            (None, "4.0.1 gh:esp-rs/espflash/v4.0.1"),
+            ('""', "4.0.1 gh:esp-rs/espflash/v4.0.1"),
+            ('"4.0.1"', "4.0.1 gh:esp-rs/espflash/v4.0.1"),
+            ('"4.1.0"', "4.1.0 gh:esp-rs/espflash/v4.1.0"),
+        ]
+        for override, expected in cases:
+            with self.subTest(override=override):
+                argv = ["make", "-s", "-f", str(stub), "show"]
+                if override is not None:
+                    argv.append(f"BR2_PACKAGE_ESPFLASH_VERSION_OVERRIDE={override}")
+                result = subprocess.run(
+                    argv, capture_output=True, text=True, check=False
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
+
+    def test_customize_applies_both_espflash_patches(self) -> None:
+        """customize_buildroot adds the option, the .mk hook, and the bail! patch."""
+        br = self.td / "br"
+        custom = self.td / "custom"
+        br.mkdir()
+        (br / "Config.in").write_text('menu "x"\nendmenu\n')
+        shutil.copy(SAMPLE, br / "Makefile")
+        (br / "package").mkdir()
+        (br / "package" / "Config.in").write_text('menu "Target packages"\nendmenu\n')
+        groff = custom / "groff"
+        groff.mkdir(parents=True)
+        (groff / "Config.in").write_text('config BR2_PACKAGE_GROFF\n\tbool "g"\n')
+        stock = br / "package" / "espflash"
+        shutil.copytree(self.pkg, stock)
+        cb.customize_buildroot(br, custom)
+        self.assertTrue((stock / "4.0.1" / self.PATCH_NAME).is_file())
+        self.assertIn(
+            "BR2_PACKAGE_ESPFLASH_VERSION_OVERRIDE",
+            (stock / "Config.in").read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "$(BR2_PACKAGE_ESPFLASH_VERSION_OVERRIDE)",
+            (stock / "espflash.mk").read_text(encoding="utf-8"),
+        )
 
 
 # 2026.08 snippets: latest kernel/headers stop at 7.1.13.
@@ -781,6 +1042,7 @@ class UpdateKernelSupportTests(unittest.TestCase):
         )
         self.assertFalse((self.br / "package" / "custom-late.mk").exists())
         self.assertTrue((self.br / "package" / "fetch-hash.mk").is_file())
+        self.assertTrue((self.br / "package" / "fetch_hash_helper.py").is_file())
         self.assertIn(
             "include package/fetch-hash.mk",
             (self.br / "Makefile").read_text(encoding="utf-8"),
@@ -813,42 +1075,34 @@ class UpdateKernelSupportTests(unittest.TestCase):
         )
         self._apply()
         dest = self.br / "package" / "fetch-hash.mk"
+        helper = self.br / "package" / "fetch_hash_helper.py"
         self.assertTrue(dest.is_file())
+        self.assertTrue(helper.is_file())
         self.assertFalse(leftover.exists())
         text = dest.read_text(encoding="utf-8")
-        self.assertIn("FETCH_HASH_URLS", text)
         self.assertNotIn("FETCH_HASH_METHOD_", text)
         self.assertNotIn("cdn.kernel.org", text)
-        self.assertIn(
-            "usbutils|https://www.kernel.org/pub/linux/utils/usb/usbutils/sha256sums.asc",
-            text,
-        )
-        self.assertIn(
-            "rust|https://static.rust-lang.org/dist/"
-            "rustc-$(RUST_VERSION)-src.tar.xz.sha256",
-            text,
-        )
-        self.assertIn(
-            "linux|https://www.kernel.org/pub/linux/kernel/v$$major.x/sha256sums.asc",
-            text,
-        )
-        self.assertIn(
-            "linux-headers|https://www.kernel.org/pub/linux/kernel/v$$major.x/sha256sums.asc",
-            text,
-        )
-        self.assertIn(
-            "gcc-standalone-toolchain|https://toolchains.bootlin.com/downloads/"
-            "releases/toolchains/$(GCC_STANDALONE_TOOLCHAIN_BOOTLIN_ARCH)/tarballs/"
-            "$(GCC_STANDALONE_TOOLCHAIN_BOOTLIN_ARCH)--"
-            "$(GCC_STANDALONE_TOOLCHAIN_BOOTLIN_LIBC)--stable-$$major.$$minor.sha256",
-            text,
-        )
+        self.assertIn("$(HOST_DIR)/bin/python3", text)
+        self.assertIn("FETCH_HASH_PYTHON ?=", text)
+        self.assertNotIn(" python3 \"", text)
+        self.assertIn("fetch_hash_helper.py", text)
         self.assertIn("PRE_DOWNLOAD_HOOKS += FETCH_HASH", text)
-        self.assertIn("$${e%%|*}", text)
-        self.assertIn("sha256sum", text)
         self.assertIn("DOWNLOAD_POST_PROCESS", text)
         self.assertIn("$($(PKG)_DL_DIR)", text)
         self.assertIn("support/download/", text)
+        for key in (
+            "rust",
+            "usbutils",
+            "linux",
+            "linux-headers",
+            "gcc-standalone-toolchain",
+            "brush-docs.tar.gz",
+        ):
+            self.assertIn(f"FETCH_HASH_URL.{key} =", text)
+        self.assertNotIn("archive/refs/tags/brush-shell-v0.4.0.tar.gz.sha256", text)
+        htext = helper.read_text(encoding="utf-8")
+        self.assertNotIn("FETCH_HASH_URL", htext)
+        self.assertNotIn("kernel.org", htext)
         makefile = makefile_path.read_text(encoding="utf-8")
         self.assertIn("include package/fetch-hash.mk", makefile)
         self.assertEqual(makefile.count("include package/fetch-hash.mk"), 1)
@@ -996,6 +1250,7 @@ class UpdateRustVersionTests(unittest.TestCase):
             bindgen_text,
         )
         self.assertTrue((self.br / "package" / "fetch-hash.mk").is_file())
+        self.assertTrue((self.br / "package" / "fetch_hash_helper.py").is_file())
         self.assertIn(
             "include package/fetch-hash.mk",
             (self.br / "Makefile").read_text(encoding="utf-8"),
@@ -1105,6 +1360,7 @@ class UpdateRustVersionTests(unittest.TestCase):
         )
         self.assertFalse((self.br / "package" / "custom-late.mk").exists())
         self.assertTrue((self.br / "package" / "fetch-hash.mk").is_file())
+        self.assertTrue((self.br / "package" / "fetch_hash_helper.py").is_file())
 
     def test_customize_does_not_bump_rust(self) -> None:
         """--customize must not rewrite rust/rust-bin/rust-bindgen versions."""
@@ -1402,6 +1658,552 @@ class PackageVersionOverrideTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn('BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE="262"', setup)
         self.assertIn('BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE="1.7.3"', setup)
+
+
+PATCHES = Path(__file__).resolve().parent / "customizeBuildroot" / "patches"
+HASH_HEADER = ["#", "# Automatically generated file; DO NOT EDIT.", "#"]
+
+
+def _load_fetch_hash_helper():
+    """Load fetch_hash_helper.py by path; it is not a customizeBuildroot import."""
+    spec = importlib.util.spec_from_file_location(
+        "fetch_hash_helper_test", PATCHES / "fetch_hash_helper.py"
+    )
+    if spec is None or spec.loader is None:
+        raise AssertionError("cannot load fetch_hash_helper.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _dead_url() -> str:
+    """Return a loopback URL nothing listens on, so any request to it fails."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return f"http://127.0.0.1:{sock.getsockname()[1]}"
+
+
+def _sha256_line(payload: bytes, name: str) -> str:
+    """Return the .hash line expected for *payload* stored as *name*."""
+    return f"sha256  {hashlib.sha256(payload).hexdigest()}  {name}"
+
+
+class _Origin:
+    """Local HTTP origin serving ``{path: bytes}``; unknown paths are 404.
+
+    Paths listed in *truncated* promise the full Content-Length but send only
+    half the body, like a connection dropped mid-download.
+    """
+
+    def __init__(
+        self, files: dict[str, bytes], truncated: Iterable[str] = ()
+    ) -> None:
+        """Bind an ephemeral loopback port; serving starts on ``with``."""
+        cut = set(truncated)
+
+        class Handler(socketserver.StreamRequestHandler):
+            """Answer one HTTP/1.0 GET from *files*, then close."""
+
+            def handle(self) -> None:
+                """Read the request line, skip the headers, write the response."""
+                path = self.rfile.readline().split()[1].decode("ascii")
+                while self.rfile.readline().strip():
+                    pass
+                body = files.get(path)
+                if body is None:
+                    self.wfile.write(b"HTTP/1.0 404 Not Found\r\n\r\n")
+                    return
+                head = f"HTTP/1.0 200 OK\r\nContent-Length: {len(body)}\r\n\r\n"
+                sent = body[: len(body) // 2] if path in cut else body
+                self.wfile.write(head.encode("ascii") + sent)
+
+        self._server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+        self._server.daemon_threads = True
+        self.base = f"http://127.0.0.1:{self._server.server_address[1]}"
+
+    def __enter__(self) -> Self:
+        """Start serving in a background thread."""
+        threading.Thread(
+            target=self._server.serve_forever, args=(0.01,), daemon=True
+        ).start()
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        """Stop serving and release the port."""
+        self._server.shutdown()
+        self._server.server_close()
+
+
+class FetchHashHelperTests(unittest.TestCase):
+    """fetch_hash_helper.py: sidecar parsing, streaming hash, post-process, append."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Load the helper once for this class."""
+        cls.helper = _load_fetch_hash_helper()
+
+    def setUp(self) -> None:
+        """Point the helper at an empty temp tree."""
+        self.td = Path(tempfile.mkdtemp())
+        self.hash_file = self.td / "pkg" / "pkg.hash"
+        self.dl_dir = self.td / "dl"
+
+    def tearDown(self) -> None:
+        """Remove the temp tree."""
+        shutil.rmtree(self.td)
+
+    def _main(self, name: str, url: str, *extra: str) -> None:
+        """Run the helper CLI for *name*, discarding its progress line."""
+        argv = [str(self.hash_file), name, url, "--dl-dir", str(self.dl_dir), *extra]
+        with redirect_stdout(StringIO()):
+            self.helper.main(argv)
+
+    def _fails(self, name: str, url: str, *extra: str) -> str:
+        """Run the helper expecting a clean exit-1 error; return its message."""
+        with self.assertRaises(SystemExit) as raised:
+            self._main(name, url, *extra)
+        self.assertIsInstance(raised.exception.code, str)
+        message = str(raised.exception.code)
+        self.assertIn("fetch-hash", message)
+        return message
+
+    def _lines(self) -> list[str]:
+        """Return the hash file's lines."""
+        return self.hash_file.read_text(encoding="utf-8").splitlines()
+
+    def _post_process_script(self, body: str) -> Path:
+        """Write an executable stand-in for support/download/*-post-process."""
+        script = self.td / "fake-post-process"
+        script.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+        script.chmod(0o755)
+        return script
+
+    def test_helper_is_not_imported_by_customize_buildroot(self) -> None:
+        """The helper is executed by Make; customizeBuildroot only copies it."""
+        root = Path(cb.__file__).resolve().parent
+        for rel in ("__init__.py", "main.py", "patches/__init__.py"):
+            text = (root / rel).read_text(encoding="utf-8")
+            self.assertNotIn("fetch-hash-helper", text)
+            self.assertNotIn("fetch_hash_helper", text)
+        fetch_hash = (root / "patches" / "fetch_hash.py").read_text(encoding="utf-8")
+        for line in fetch_hash.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(("import ", "from ")):
+                self.assertNotIn("fetch-hash-helper", stripped)
+                self.assertNotIn("fetch_hash_helper", stripped)
+
+    def test_sidecar_matches_basename_of_ci_path(self) -> None:
+        """A CI absolute path in the sidecar still matches the tarball basename."""
+        digest = "1070fa3a9470927c0c3d9c5417151f1b8f72317b42bed21f33e5fd4f3dad3332"
+        listing = f"{digest}  /home/runner/work/brush/brush/brush-docs.tar.gz\n"
+        with _Origin({"/sums": listing.encode()}) as origin:
+            self._main("brush-docs.tar.gz", "", "--sidecar", f"{origin.base}/sums")
+            self.assertIn(
+                f"sha256  {digest}  brush-docs.tar.gz",
+                self._lines(),
+            )
+
+    def test_sidecar_picks_the_named_entry_from_a_signed_list(self) -> None:
+        """PGP armor, other files, and a ``*`` binary marker do not confuse it."""
+        xz, gz = "a" * 64, "b" * 64
+        listing = (
+            "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\n"
+            f"{'c' * 64}  linux-7.2.8.tar.xz\n"
+            f"{xz}  linux-7.2.9.tar.xz\n"
+            f"{gz} *linux-7.2.9.tar.gz\n"
+            "-----BEGIN PGP SIGNATURE-----\n\nabc\n-----END PGP SIGNATURE-----\n"
+        )
+        with _Origin({"/sums": listing.encode()}) as origin:
+            sums = f"{origin.base}/sums"
+            self._main("linux-7.2.9.tar.xz", "", "--sidecar", sums)
+            self._main("linux-7.2.9.tar.gz", "", "--sidecar", sums)
+        self.assertEqual(
+            [line for line in self._lines() if line.startswith("sha256")],
+            [f"sha256  {xz}  linux-7.2.9.tar.xz", f"sha256  {gz}  linux-7.2.9.tar.gz"],
+        )
+
+    def test_sidecar_with_a_lone_digest_and_uppercase_hex(self) -> None:
+        """A bare digest file is accepted; the digest is written lowercase."""
+        digest = "ABCDEF0123456789" * 4
+        with _Origin({"/one.sha256": f"{digest}\n".encode()}) as origin:
+            self._main("x.tar.xz", "", "--sidecar", f"{origin.base}/one.sha256")
+        self.assertIn(f"sha256  {digest.lower()}  x.tar.xz", self._lines())
+
+    def test_sidecar_without_the_file_is_fatal(self) -> None:
+        """A checksum file that omits the tarball is an error, not a guess."""
+        listing = f"{'a' * 64}  other.tar.xz\n{'b' * 64}  another.tar.xz\n"
+        with _Origin({"/sums": listing.encode()}) as origin:
+            message = self._fails("x.tar.xz", "", "--sidecar", f"{origin.base}/sums")
+        self.assertIn("not listed", message)
+        self.assertFalse(self.hash_file.exists())
+
+    def test_sidecar_marker_is_written_once(self) -> None:
+        """Two files from one sidecar share a single ``# From`` marker."""
+        listing = f"{'a' * 64}  one.tar.xz\n{'b' * 64}  two.tar.xz\n"
+        with _Origin({"/sums": listing.encode()}) as origin:
+            sums = f"{origin.base}/sums"
+            self._main("one.tar.xz", "", "--sidecar", sums)
+            self._main("two.tar.xz", "", "--sidecar", sums)
+            self.assertEqual(self._lines().count(f"# From {sums}"), 1)
+        self.assertEqual(len([ln for ln in self._lines() if "sha256" in ln]), 2)
+
+    def test_http_error_is_fatal(self) -> None:
+        """A 404 stops the build with the URL and status in the message."""
+        with _Origin({}) as origin:
+            message = self._fails("x.tar.gz", f"{origin.base}/x.tar.gz")
+        self.assertIn("404", message)
+        self.assertFalse(self.hash_file.exists())
+
+    def test_no_url_and_no_sidecar_is_fatal(self) -> None:
+        """Without a sidecar or a download URL there is nothing to hash."""
+        self.assertIn("no URL", self._fails("x.tar.gz", ""))
+
+    def test_streams_tarball_into_dl_dir(self) -> None:
+        """Without a sidecar the tarball is hashed while it is saved to DL_DIR."""
+        payload = b"tarball-bytes" * 1000
+        with _Origin({"/pkg-1.0.tar.gz": payload}) as origin:
+            self._main("pkg-1.0.tar.gz", f"{origin.base}/pkg-1.0.tar.gz")
+        self.assertEqual(self._lines()[:3], HASH_HEADER)
+        self.assertEqual(self._lines()[-1], _sha256_line(payload, "pkg-1.0.tar.gz"))
+        self.assertEqual((self.dl_dir / "pkg-1.0.tar.gz").read_bytes(), payload)
+        self.assertEqual([p.name for p in self.dl_dir.iterdir()], ["pkg-1.0.tar.gz"])
+
+    def test_truncated_download_is_not_hashed(self) -> None:
+        """A body shorter than Content-Length must not produce a hash line."""
+        with _Origin({"/p.tar.gz": b"z" * 4000}, truncated=["/p.tar.gz"]) as origin:
+            message = self._fails("p.tar.gz", f"{origin.base}/p.tar.gz")
+        self.assertIn("truncated", message)
+        self.assertFalse(self.hash_file.exists())
+        self.assertEqual(list(self.dl_dir.iterdir()), [])
+
+    def test_post_process_hashes_the_rewritten_file(self) -> None:
+        """Cargo-style post-process output, not the raw download, is hashed."""
+        script = self._post_process_script(
+            "while [ $# -gt 0 ]; do\n"
+            "  case $1 in -o) out=$2; shift 2 ;; -n) name=$2; shift 2 ;;\n"
+            "    *) rest=\"$rest $1\"; shift ;; esac\n"
+            "done\n"
+            "printf 'vendored:%s:%s' \"$name\" \"$rest\" > \"$out\"\n"
+        )
+        with _Origin({"/pkg.tar.gz": b"raw-archive"}) as origin:
+            self._main(
+                "pkg-1.0.tar.gz",
+                f"{origin.base}/pkg.tar.gz",
+                "--post-process",
+                f"{script} -n pkg-1.0 --opt 'two words'",
+            )
+        vendored = b"vendored:pkg-1.0: --opt two words"
+        self.assertEqual((self.dl_dir / "pkg-1.0.tar.gz").read_bytes(), vendored)
+        self.assertEqual(self._lines()[-1], _sha256_line(vendored, "pkg-1.0.tar.gz"))
+        self.assertEqual([p.name for p in self.dl_dir.iterdir()], ["pkg-1.0.tar.gz"])
+
+    def test_post_process_failure_is_fatal(self) -> None:
+        """A failing post-process leaves no hash line and no file behind."""
+        script = self._post_process_script("exit 1\n")
+        with _Origin({"/pkg.tar.gz": b"raw"}) as origin:
+            message = self._fails(
+                "pkg-1.0.tar.gz",
+                f"{origin.base}/pkg.tar.gz",
+                "--post-process",
+                str(script),
+            )
+        self.assertIn("post-process", message)
+        self.assertFalse(self.hash_file.exists())
+        self.assertEqual(list(self.dl_dir.iterdir()), [])
+
+    def test_append_keeps_existing_lines_and_fixes_a_missing_newline(self) -> None:
+        """New lines go after existing ones, even if the file lacks a final \\n."""
+        self.hash_file.parent.mkdir(parents=True)
+        old = f"sha256  {'a' * 64}  old.tar.gz"
+        self.hash_file.write_text(old, encoding="utf-8")
+        payload = b"new"
+        with _Origin({"/new.tar.gz": payload}) as origin:
+            self._main("new.tar.gz", f"{origin.base}/new.tar.gz")
+        self.assertEqual(
+            self._lines(), [old, _sha256_line(payload, "new.tar.gz")]
+        )
+
+
+class FetchHashMakeTests(unittest.TestCase):
+    """package/fetch-hash.mk under GNU make, with the real helper and a local origin.
+
+    The stub makefile stands in for Buildroot: it defines the ``DEMO_*``
+    variables a package would, ``qstrip``/``UPPERCASE``, and a ``run`` target
+    that expands the package's PRE_DOWNLOAD_HOOKS the way pkg-generic.mk does.
+    """
+
+    STUB = """\
+TOPDIR = {top}
+TAR = tar
+HOST_DIR = $(TOPDIR)/host
+EXTRA_ENV =
+qstrip = $(strip $(subst ",,$(1)))
+UPPERCASE = $(shell echo '$(1)' | tr 'a-z-' 'A-Z_')
+define sep
+
+
+endef
+PACKAGES_ALL = demo
+PKG = DEMO
+DEMO_RAWNAME = demo
+DEMO_VERSION = 1.2.3
+DEMO_SOURCE = demo-1.2.3.tar.gz
+DEMO_SITE = {site}
+DEMO_PKGDIR = $(TOPDIR)/package/demo
+DEMO_HASH_FILES = $(DEMO_PKGDIR)/demo.hash
+DEMO_DL_DIR = $(TOPDIR)/dl/demo
+include $(TOPDIR)/package/fetch-hash.mk
+{extra}
+run:
+\t$(foreach hook,$($(PKG)_PRE_DOWNLOAD_HOOKS),$(call $(hook))$(sep))
+print:
+\t@echo '$(FETCH_HASH_URL.$(KEY))'
+showpython:
+\t@echo '$(FETCH_HASH_PYTHON)'
+"""
+
+    def setUp(self) -> None:
+        """Install fetch-hash.mk and the helper into a temp package/ dir."""
+        if shutil.which("make") is None:
+            self.skipTest("make is not installed")
+        self.td = Path(tempfile.mkdtemp())
+        package = self.td / "package"
+        (package / "demo").mkdir(parents=True)
+        for name in ("fetch-hash.mk", "fetch_hash_helper.py"):
+            shutil.copy(PATCHES / name, package / name)
+        self.hash_file = package / "demo" / "demo.hash"
+        self.dl_demo = self.td / "dl" / "demo"
+
+    def tearDown(self) -> None:
+        """Remove the temp tree."""
+        shutil.rmtree(self.td)
+
+    def _make(
+        self,
+        target: str = "run",
+        *,
+        site: str = "",
+        extra: str = "",
+        python: str | None = sys.executable,
+        **cmdline: str,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run ``make <target>`` on the stub makefile and return the result."""
+        stub = self.td / "stub.mk"
+        stub.write_text(
+            self.STUB.format(top=self.td, site=site or _dead_url(), extra=extra),
+            encoding="utf-8",
+        )
+        argv = ["make", "-s", "-f", str(stub), target]
+        if python:
+            argv.append(f"FETCH_HASH_PYTHON={python}")
+        argv += [f"{key}={value}" for key, value in cmdline.items()]
+        return subprocess.run(argv, capture_output=True, text=True, check=False)
+
+    def _ok(self, result: subprocess.CompletedProcess[str]) -> None:
+        """Assert a make run succeeded, showing stderr if it did not."""
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def _lines(self) -> list[str]:
+        """Return the demo hash file's non-comment lines."""
+        text = self.hash_file.read_text(encoding="utf-8")
+        return [ln for ln in text.splitlines() if ln.startswith("sha256")]
+
+    def test_sidecar_url_templates(self) -> None:
+        """Make expands each FETCH_HASH_URL entry from the package's version."""
+        bootlin = (
+            "https://toolchains.bootlin.com/downloads/releases/toolchains/"
+            "x86-64-v2/tarballs/x86-64-v2--glibc--stable-2026.08-1.sha256"
+        )
+        cases = [
+            (
+                "rust",
+                "1.99.0",
+                "https://static.rust-lang.org/dist/rustc-1.99.0-src.tar.xz.sha256",
+            ),
+            (
+                "usbutils",
+                "018",
+                "https://www.kernel.org/pub/linux/utils/usb/usbutils/sha256sums.asc",
+            ),
+            (
+                "linux",
+                "7.2.9",
+                "https://www.kernel.org/pub/linux/kernel/v7.x/sha256sums.asc",
+            ),
+            (
+                "linux-headers",
+                "6.17.1",
+                "https://www.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc",
+            ),
+            ("gcc-standalone-toolchain", "2026.08-1", bootlin),
+            (
+                "brush-docs.tar.gz",
+                "v0.4.0",
+                (
+                    "https://github.com/reubeno/brush/releases/download/"
+                    "brush-shell-v0.4.0/brush-docs.tar.gz.sha256"
+                ),
+            ),
+        ]
+        for key, version, expected in cases:
+            with self.subTest(key=key):
+                result = self._make(
+                    "print",
+                    KEY=key,
+                    DEMO_VERSION=version,
+                    GCC_STANDALONE_TOOLCHAIN_BOOTLIN_ARCH="x86-64-v2",
+                    GCC_STANDALONE_TOOLCHAIN_BOOTLIN_LIBC="glibc",
+                )
+                self._ok(result)
+                self.assertEqual(result.stdout.strip(), expected)
+
+    def test_existing_hash_line_means_no_python(self) -> None:
+        """A sha256 line for the tarball ends the hook before any network use."""
+        line = f"sha256  {'0' * 64}  demo-1.2.3.tar.gz\n"
+        self.hash_file.write_text(line, encoding="utf-8")
+        self._ok(self._make())
+        self.assertEqual(self.hash_file.read_text(encoding="utf-8"), line)
+        self.assertFalse(self.dl_demo.exists())
+
+    def test_only_an_exact_filename_counts_as_present(self) -> None:
+        """Another file's line, or a longer name ending the same, is no match."""
+        payload = b"demo"
+        self.hash_file.write_text(
+            f"sha256  {'0' * 64}  demo-1.2.2.tar.gz\n"
+            f"sha256  {'1' * 64}  xdemo-1.2.3.tar.gz\n",
+            encoding="utf-8",
+        )
+        with _Origin({"/demo-1.2.3.tar.gz": payload}) as origin:
+            self._ok(self._make(site=origin.base))
+        self.assertEqual(self._lines()[-1], _sha256_line(payload, "demo-1.2.3.tar.gz"))
+        self.assertEqual(len(self._lines()), 3)
+
+    def test_missing_hash_streams_the_tarball(self) -> None:
+        """No hash file and no table entry: download once, hash, create the file."""
+        payload = b"demo-tarball"
+        with _Origin({"/demo-1.2.3.tar.gz": payload}) as origin:
+            self._ok(self._make(site=origin.base))
+        self.assertEqual(self._lines(), [_sha256_line(payload, "demo-1.2.3.tar.gz")])
+        self.assertEqual((self.dl_demo / "demo-1.2.3.tar.gz").read_bytes(), payload)
+
+    def test_table_entry_replaces_the_download(self) -> None:
+        """A FETCH_HASH_URL entry supplies the digest; the tarball is not fetched."""
+        digest = "d" * 64
+        with _Origin({"/sums": f"{digest}  demo-1.2.3.tar.gz\n".encode()}) as origin:
+            sums = f"{origin.base}/sums"
+            self._ok(self._make(extra=f"FETCH_HASH_URL.demo = {sums}\n"))
+            self.assertIn(f"# From {sums}", self.hash_file.read_text(encoding="utf-8"))
+        self.assertEqual(self._lines(), [f"sha256  {digest}  demo-1.2.3.tar.gz"])
+        self.assertFalse(self.dl_demo.exists())
+
+    def test_extra_downloads_are_hashed_too(self) -> None:
+        """EXTRA_DOWNLOADS get a line each; a table entry is keyed by basename."""
+        tarball, blob, docs = b"main", b"blob", "e" * 64
+        files = {
+            "/demo-1.2.3.tar.gz": tarball,
+            "/pub/blob.bin": blob,
+            "/docs.sha256": f"{docs}  docs.tar.gz\n".encode(),
+        }
+        with _Origin(files) as origin:
+            extra = (
+                f"DEMO_EXTRA_DOWNLOADS = docs.tar.gz {origin.base}/pub/blob.bin\n"
+                f"FETCH_HASH_URL.docs.tar.gz = {origin.base}/docs.sha256\n"
+            )
+            self._ok(self._make(site=origin.base, extra=extra))
+        self.assertEqual(
+            self._lines(),
+            [
+                _sha256_line(tarball, "demo-1.2.3.tar.gz"),
+                f"sha256  {docs}  docs.tar.gz",
+                _sha256_line(blob, "blob.bin"),
+            ],
+        )
+        self.assertEqual(
+            sorted(p.name for p in self.dl_demo.iterdir()),
+            ["blob.bin", "demo-1.2.3.tar.gz"],
+        )
+
+    def test_post_process_runs_with_package_settings(self) -> None:
+        """DOWNLOAD_POST_PROCESS, its name and opts reach the helper intact."""
+        script = self.td / "support" / "download" / "fake-post-process"
+        script.parent.mkdir(parents=True)
+        script.write_text(
+            "#!/bin/sh\n"
+            "while [ $# -gt 0 ]; do\n"
+            "  case $1 in -o) out=$2; shift 2 ;; -n) name=$2; shift 2 ;;\n"
+            "    *) rest=\"$rest $1\"; shift ;; esac\n"
+            "done\n"
+            "printf 'vendored:%s:%s' \"$name\" \"$rest\" > \"$out\"\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        extra = (
+            "DEMO_DOWNLOAD_POST_PROCESS = fake\n"
+            "DEMO_DL_SUBDIR = demo\n"
+            "DEMO_DOWNLOAD_POST_PROCESS_OPTS = --foo bar\n"
+        )
+        with _Origin({"/demo-1.2.3.tar.gz": b"raw"}) as origin:
+            self._ok(self._make(site=origin.base, extra=extra))
+        vendored = b"vendored:demo-1.2.3: --foo bar"
+        self.assertEqual(self._lines(), [_sha256_line(vendored, "demo-1.2.3.tar.gz")])
+        self.assertEqual((self.dl_demo / "demo-1.2.3.tar.gz").read_bytes(), vendored)
+
+    def test_skips_leave_the_hash_file_alone(self) -> None:
+        """VCS sites, local overrides, and BR_NO_CHECK_HASH_FOR names are skipped."""
+        for extra in (
+            "DEMO_SITE_METHOD = git\n",
+            "DEMO_OVERRIDE_SRCDIR = /src/demo\n",
+            "BR_NO_CHECK_HASH_FOR = other.tar.gz demo-1.2.3.tar.gz\n",
+        ):
+            with self.subTest(extra=extra.strip()):
+                self._ok(self._make(extra=extra))
+                self.assertFalse(self.hash_file.exists())
+
+    def test_python_is_host_when_installed_else_distro(self) -> None:
+        """Host python3 wins once it exists; before that the distro one is used."""
+        result = self._make("showpython", python=None)
+        self._ok(result)
+        self.assertEqual(result.stdout.strip(), "/usr/bin/python3")
+        host = self.td / "host" / "bin" / "python3"
+        host.parent.mkdir(parents=True)
+        marker = self.td / "host-python-used"
+        host.write_text(
+            f'#!/bin/sh\ntouch "{marker}"\nexec "{sys.executable}" "$@"\n',
+            encoding="utf-8",
+        )
+        host.chmod(0o755)
+        self.assertEqual(
+            self._make("showpython", python=None).stdout.strip(), str(host)
+        )
+        payload = b"demo"
+        with _Origin({"/demo-1.2.3.tar.gz": payload}) as origin:
+            self._ok(self._make(site=origin.base, python=None))
+        self.assertTrue(marker.exists())
+        self.assertEqual(self._lines(), [_sha256_line(payload, "demo-1.2.3.tar.gz")])
+
+    def test_ignores_python3_from_the_host_tree(self) -> None:
+        """A python3 that EXTRA_ENV puts first on PATH is never the interpreter.
+
+        Buildroot's host python3 has no CA bundle, so TLS downloads fail with
+        CERTIFICATE_VERIFY_FAILED; the hook must stay on the distro python.
+        """
+        trap = self.td / "host" / "bin" / "python3"
+        trap.parent.mkdir(parents=True)
+        trap.write_text("#!/bin/sh\necho host python used >&2\nexit 97\n")
+        trap.chmod(0o755)
+        extra = f'EXTRA_ENV = PATH="{trap.parent}:$(PATH)"\n'
+        payload = b"demo"
+        with _Origin({"/demo-1.2.3.tar.gz": payload}) as origin:
+            self._ok(self._make(site=origin.base, extra=extra))
+        self.assertEqual(self._lines(), [_sha256_line(payload, "demo-1.2.3.tar.gz")])
+
+    def test_helper_failure_stops_make(self) -> None:
+        """A 404 from the origin makes the hook, and so the build, fail."""
+        with _Origin({}) as origin:
+            result = self._make(site=origin.base)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ERROR: fetch-hash", result.stderr)
+        self.assertFalse(self.hash_file.exists())
 
 
 if __name__ == "__main__":

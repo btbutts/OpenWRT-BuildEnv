@@ -132,6 +132,7 @@ RUN chmod +x \
     /builder/buildOpenWRTimages.sh \
     /builder/getBuildroot.sh \
     /builder/customizeBuildroot/main.py \
-    /builder/buildInstallerUSB.sh
+    /builder/buildInstallerUSB.sh \
+    /builder/customizeBuildroot/patches/fetch_hash_helper.py
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]

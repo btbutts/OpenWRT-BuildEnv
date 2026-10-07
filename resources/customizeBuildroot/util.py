@@ -43,6 +43,13 @@ def insert_kconfig_after_if(text: str, if_line: str, symbol: str, block: str) ->
     return text[:at] + "\n" + block + "\n" + text[at:]
 
 
+def append_kconfig_if_block(text: str, if_symbol: str, symbol: str, block: str) -> str:
+    """Append *block* inside a new ``if <if_symbol>`` when *symbol* is absent."""
+    if f"config {symbol}\n" in text:
+        return text
+    return text.rstrip("\n") + f"\n\nif {if_symbol}\n\n{block}\nendif\n"
+
+
 def insert_before_meson_eval(text: str, tail: str, already: str) -> str:
     """Insert *tail* before the first meson-package eval unless *already* is present."""
     if already in text:
