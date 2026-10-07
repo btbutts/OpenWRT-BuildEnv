@@ -1,10 +1,11 @@
-"""Install package/fetch-hash.mk and include it from the top Makefile."""
+"""Install package/fetch-hash.mk plus fetch_hash_helper.py, and include the mk."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 FETCH_HASH_MK_NAME = "fetch-hash.mk"
+FETCH_HASH_HELPER_NAME = "fetch_hash_helper.py"
 FETCH_HASH_INCLUDE_MARKER = f"include package/{FETCH_HASH_MK_NAME}"
 FETCH_HASH_INCLUDE_BLOCK = (
     "\n# JIT-append sha256 lines for package tarballs missing from .hash files.\n"
@@ -38,23 +39,25 @@ def _drop_legacy_linux_get_hash_include(text: str) -> str:
 
 def write_fetch_hash_mk(br_path: Path) -> None:
     """
-    Install ``package/fetch-hash.mk`` and include it from the top Makefile.
+    Install ``package/fetch-hash.mk`` and ``package/fetch_hash_helper.py``.
 
-    The include is appended once, after all ``package/*/*.mk`` files and
-    ``BR2_EXTERNAL`` trees have been read, so ``$(PACKAGES_ALL)`` is
-    complete when ``FETCH_HASH`` is registered on every package.
+    The makefile include is appended once, after all ``package/*/*.mk``
+    files and ``BR2_EXTERNAL`` trees have been read, so ``$(PACKAGES_ALL)``
+    is complete when ``FETCH_HASH`` is registered on every package. The
+    helper is executed by the makefile; it is not imported here.
     """
-    src = Path(__file__).with_name(FETCH_HASH_MK_NAME)
-    if not src.is_file():
-        raise SystemExit(f"Error: {src} is missing from customizeBuildroot")
     dest_dir = br_path / "package"
     if not dest_dir.is_dir():
         raise SystemExit(
             f"Error: {dest_dir} is missing; cannot install {FETCH_HASH_MK_NAME}"
         )
-    dest = dest_dir / FETCH_HASH_MK_NAME
-    dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
-    print(f"--> Wrote {dest}")
+    for name in (FETCH_HASH_MK_NAME, FETCH_HASH_HELPER_NAME):
+        src = Path(__file__).with_name(name)
+        if not src.is_file():
+            raise SystemExit(f"Error: {src} is missing from customizeBuildroot")
+        dest = dest_dir / name
+        dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        print(f"--> Wrote {dest}")
 
     leftover = br_path / "linux" / "from-6.17" / "get-hash.mk"
     if leftover.is_file() or leftover.is_symlink():
