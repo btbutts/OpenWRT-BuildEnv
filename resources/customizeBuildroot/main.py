@@ -4,7 +4,7 @@ Patch an extracted Buildroot tree for this installer.
 
 Keeps man/docs when requested and drops small patches into stock
 Buildroot package dirs (openvmtools C23, espflash bail!, linux-tools PCI, optional
-systemd/linux-pam version overrides) during `getBuildroot.sh
+systemd/linux-pam/ruby version overrides) during `getBuildroot.sh
 --customize`. Writes `package/custom-late.mk` so br2-external
 packages under `buildrootConf/custom_package/` install last on a
 full image build (gcc-standalone-toolchain last among those;
@@ -55,6 +55,7 @@ from customizeBuildroot.patches.linux_pam import (
 from customizeBuildroot.patches.linux_tools import patch_linux_tools
 from customizeBuildroot.patches.man_docs import patch_config_in, patch_makefile
 from customizeBuildroot.patches.openvmtools import patch_openvmtools
+from customizeBuildroot.patches.ruby import patch_ruby_config_in, patch_ruby_mk
 from customizeBuildroot.patches.systemd import (
     patch_systemd_config_in,
     patch_systemd_mk,
@@ -97,7 +98,7 @@ DEFAULT_BR_PATH = default_br_path()
 
 def patch_package_version_overrides(br_path: Path) -> None:
     """
-    Add optional systemd, linux-pam and espflash version-override Kconfig/makefile.
+    Add optional systemd, linux-pam, espflash and ruby version-override Kconfig/makefile.
 
     Missing package dirs are a no-op (unit-test fixtures). Empty override
     strings keep Buildroot's packaged versions.
@@ -117,6 +118,11 @@ def patch_package_version_overrides(br_path: Path) -> None:
     if espflash_cfg.is_file() and espflash_mk.is_file():
         patch_espflash_config_in(espflash_cfg)
         patch_espflash_mk(espflash_mk)
+    ruby_cfg = br_path / "package" / "ruby" / "Config.in"
+    ruby_mk = br_path / "package" / "ruby" / "ruby.mk"
+    if ruby_cfg.is_file() and ruby_mk.is_file():
+        patch_ruby_config_in(ruby_cfg)
+        patch_ruby_mk(ruby_mk)
 
 
 def customize_buildroot(

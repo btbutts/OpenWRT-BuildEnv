@@ -38,6 +38,7 @@ from .patches.openvmtools import (
     OPENVMTOOLS_C23_PATCH,
     patch_openvmtools,
 )
+from .patches.ruby import patch_ruby_config_in, patch_ruby_mk
 from .util import kconfig_package_symbol
 
 __all__ = [
@@ -63,6 +64,8 @@ __all__ = [
     "patch_makefile",
     "patch_openvmtools",
     "patch_package_version_overrides",
+    "patch_ruby_config_in",
+    "patch_ruby_mk",
     "update_kernel_support",
     "update_rust_version",
 ]

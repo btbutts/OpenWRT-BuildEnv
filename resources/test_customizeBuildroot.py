@@ -1662,6 +1662,268 @@ class PackageVersionOverrideTests(unittest.TestCase):
         self.assertIn('BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE="1.7.3"', setup)
 
 
+_RUBY_MK_2026_08 = r"""\
+################################################################################
+#
+# ruby
+#
+################################################################################
+
+RUBY_VERSION_MAJOR = 4.0
+RUBY_VERSION = $(RUBY_VERSION_MAJOR).5
+RUBY_VERSION_EXT = 4.0.0
+RUBY_SITE = http://cache.ruby-lang.org/pub/ruby/$(RUBY_VERSION_MAJOR)
+RUBY_SOURCE = ruby-$(RUBY_VERSION).tar.xz
+
+RUBY_LICENSE = \
+	Ruby or BSD-2-Clause, \
+	BSD-3-Clause, \
+	MIT, \
+	others
+RUBY_LICENSE_FILES = LEGAL COPYING BSDL
+
+RUBY_CPE_ID_VENDOR = ruby-lang
+
+RUBY_DEPENDENCIES = host-pkgconf host-ruby
+HOST_RUBY_DEPENDENCIES = host-libyaml host-pkgconf host-openssl
+RUBY_MAKE_ENV = $(TARGET_MAKE_ENV)
+RUBY_CONF_OPTS = \
+	--disable-install-doc \
+	--disable-rpath \
+	--disable-rubygems \
+	--disable-yjit \
+	--disable-zjit
+HOST_RUBY_CONF_OPTS = \
+	--disable-install-doc \
+	--disable-yjit \
+	--disable-zjit \
+	--with-out-ext=curses,readline \
+	--without-gmp
+
+ifeq ($(BR2_TOOLCHAIN_HAS_LIBATOMIC),y)
+RUBY_CONF_ENV += LIBS=-latomic
+endif
+
+ifeq ($(BR2_TOOLCHAIN_USES_UCLIBC),y)
+# On uClibc, finite, isinf and isnan are not directly implemented as
+# functions.  Instead math.h #define's these to __finite, __isinf and
+# __isnan, confusing the Ruby configure script. Tell it that they
+# really are available.
+RUBY_CONF_ENV += \
+	ac_cv_func_finite=yes \
+	ac_cv_func_isinf=yes \
+	ac_cv_func_isnan=yes
+endif
+
+ifeq ($(BR2_TOOLCHAIN_HAS_SSP),)
+RUBY_CONF_ENV += stack_protector=no
+endif
+
+# Force optionals to build before we do
+ifeq ($(BR2_PACKAGE_BERKELEYDB),y)
+RUBY_DEPENDENCIES += berkeleydb
+endif
+ifeq ($(BR2_PACKAGE_LIBFFI),y)
+RUBY_DEPENDENCIES += libffi
+else
+# Disable fiddle to avoid a build failure with bundled-libffi on MIPS
+RUBY_CONF_OPTS += --with-out-ext=fiddle
+endif
+ifeq ($(BR2_PACKAGE_GDBM),y)
+RUBY_DEPENDENCIES += gdbm
+endif
+ifeq ($(BR2_PACKAGE_LIBYAML),y)
+RUBY_DEPENDENCIES += libyaml
+endif
+ifeq ($(BR2_PACKAGE_NCURSES),y)
+RUBY_DEPENDENCIES += ncurses
+endif
+ifeq ($(BR2_PACKAGE_OPENSSL),y)
+RUBY_DEPENDENCIES += openssl
+endif
+ifeq ($(BR2_PACKAGE_READLINE),y)
+RUBY_DEPENDENCIES += readline
+endif
+ifeq ($(BR2_PACKAGE_ZLIB),y)
+RUBY_DEPENDENCIES += zlib
+endif
+ifeq ($(BR2_PACKAGE_GMP),y)
+RUBY_DEPENDENCIES += gmp
+RUBY_CONF_OPTS += --with-gmp
+else
+RUBY_CONF_OPTS += --without-gmp
+endif
+
+RUBY_CFLAGS = $(TARGET_CFLAGS)
+
+ifeq ($(BR2_TOOLCHAIN_HAS_GCC_BUG_83143),y)
+RUBY_CFLAGS += -freorder-blocks-algorithm=simple
+endif
+
+RUBY_CONF_OPTS += CFLAGS="$(RUBY_CFLAGS)"
+
+# Remove rubygems and friends, as they need extensions that aren't
+# built and a target compiler.
+RUBY_EXTENSIONS_REMOVE = rake* rdoc* rubygems*
+define RUBY_REMOVE_RUBYGEMS
+	rm -f $(addprefix $(TARGET_DIR)/usr/bin/, gem rdoc ri rake)
+	rm -rf $(TARGET_DIR)/usr/lib/ruby/gems
+	rm -rf $(addprefix $(TARGET_DIR)/usr/lib/ruby/$(RUBY_VERSION_EXT)/, \
+		$(RUBY_EXTENSIONS_REMOVE))
+endef
+RUBY_POST_INSTALL_TARGET_HOOKS += RUBY_REMOVE_RUBYGEMS
+
+$(eval $(autotools-package))
+$(eval $(host-autotools-package))
+"""
+
+_RUBY_CONFIG_2026_08 = r"""\
+config BR2_PACKAGE_RUBY
+	bool "ruby"
+	depends on BR2_USE_WCHAR
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	depends on !BR2_STATIC_LIBS
+	depends on BR2_TOOLCHAIN_GCC_AT_LEAST_4_9
+	depends on BR2_HOST_GCC_AT_LEAST_4_9
+	help
+	  Object Oriented Scripting Language.
+
+	  http://www.ruby-lang.org/
+
+comment "ruby needs a toolchain w/ wchar, threads, dynamic library, gcc >= 4.9, host gcc >= 4.9"
+	depends on !BR2_USE_WCHAR || !BR2_TOOLCHAIN_HAS_THREADS || \
+		BR2_STATIC_LIBS || !BR2_TOOLCHAIN_GCC_AT_LEAST_4_9 || \
+		!BR2_HOST_GCC_AT_LEAST_4_9
+"""
+
+
+class RubyOverrideTests(unittest.TestCase):
+    """--customize adds the ruby version override and feature toggles."""
+
+    def setUp(self) -> None:
+        """Minimal tree with the stock 2026.08 ruby package files."""
+        self.td = Path(tempfile.mkdtemp())
+        self.br = self.td / "Buildroot-Builder"
+        self.ruby = self.br / "package" / "ruby"
+        self.ruby.mkdir(parents=True)
+        (self.br / "Config.in").write_text('menu "x"\nendmenu\n')
+        shutil.copy(SAMPLE, self.br / "Makefile")
+        (self.br / "package" / "Config.in").write_text(
+            'menu "Target packages"\nendmenu\n'
+        )
+        (self.ruby / "Config.in").write_text(_RUBY_CONFIG_2026_08)
+        (self.ruby / "ruby.mk").write_text(_RUBY_MK_2026_08)
+        self.custom = self.td / "custom"
+        groff = self.custom / "groff"
+        groff.mkdir(parents=True)
+        (groff / "Config.in").write_text('config BR2_PACKAGE_GROFF\n\tbool "g"\n')
+
+    def tearDown(self) -> None:
+        """Remove the temp tree."""
+        shutil.rmtree(self.td)
+
+    def _apply(self) -> None:
+        """Run --customize against the fixture tree."""
+        cb.customize_buildroot(self.br, self.custom)
+
+    def test_kconfig_options(self) -> None:
+        """Version override defaults to empty; the feature toggles are bools."""
+        self._apply()
+        cfg = (self.ruby / "Config.in").read_text()
+        self.assertIn("config BR2_PACKAGE_RUBY_VERSION_OVERRIDE", cfg)
+        self.assertIn('\tstring "ruby version override"\n\tdefault ""\n', cfg)
+        for symbol in ("RUBYGEMS", "YJIT", "ZJIT"):
+            self.assertIn(f"config BR2_PACKAGE_RUBY_{symbol}\n\tbool ", cfg)
+        self.assertIn("if BR2_PACKAGE_RUBY\n", cfg)
+
+    def test_makefile_keeps_stock_version_and_derives_the_series(self) -> None:
+        """RUBY_VERSION stays 4.0.5; a set override drives version, series and EXT."""
+        self._apply()
+        mk = (self.ruby / "ruby.mk").read_text()
+        self.assertIn("RUBY_VERSION = $(RUBY_VERSION_MAJOR).5\n", mk)
+        self.assertIn("RUBY_VERSION_MAJOR = 4.0\n", mk)
+        self.assertIn(
+            "ifneq ($(call qstrip,$(BR2_PACKAGE_RUBY_VERSION_OVERRIDE)),)\n"
+            "RUBY_VERSION = $(call qstrip,$(BR2_PACKAGE_RUBY_VERSION_OVERRIDE))\n"
+            "RUBY_VERSION_MAJOR = $(word 1,$(subst ., ,$(RUBY_VERSION)))."
+            "$(word 2,$(subst ., ,$(RUBY_VERSION)))\n"
+            "RUBY_VERSION_EXT = $(RUBY_VERSION_MAJOR).0\n"
+            "endif\n",
+            mk,
+        )
+        self.assertLess(
+            mk.index("RUBY_SOURCE ="), mk.index("BR2_PACKAGE_RUBY_VERSION_OVERRIDE")
+        )
+
+    def test_conf_opts_are_conditional(self) -> None:
+        """Only --disable-rpath is unconditional; the rest follow the options."""
+        self._apply()
+        mk = (self.ruby / "ruby.mk").read_text()
+        self.assertIn("RUBY_CONF_OPTS = \\\n\t--disable-rpath\n", mk)
+        self.assertIn(
+            "ifneq ($(BR2_KEEP_MAN_PAGES_DOCS),y)\n"
+            "RUBY_CONF_OPTS += --disable-install-doc\n"
+            "endif\n",
+            mk,
+        )
+        self.assertIn(
+            "ifneq ($(BR2_PACKAGE_RUBY_RUBYGEMS),y)\n"
+            "RUBY_CONF_OPTS += --disable-rubygems\n"
+            "endif\n",
+            mk,
+        )
+        for jit in ("yjit", "zjit"):
+            self.assertIn(
+                f"ifeq ($(BR2_PACKAGE_RUBY_{jit.upper()}),y)\n"
+                "RUBY_DEPENDENCIES += host-rustc\n"
+                f"RUBY_CONF_OPTS += --enable-{jit}\n"
+                "else\n"
+                f"RUBY_CONF_OPTS += --disable-{jit}\n"
+                "endif\n",
+                mk,
+            )
+        host_block = mk[mk.index("HOST_RUBY_CONF_OPTS") :].split("\n\n")[0]
+        self.assertIn("--disable-install-doc", host_block)
+
+    def test_rubygems_removal_hook_is_guarded(self) -> None:
+        """RUBY_REMOVE_RUBYGEMS is only registered without BR2_PACKAGE_RUBY_RUBYGEMS."""
+        self._apply()
+        mk = (self.ruby / "ruby.mk").read_text()
+        self.assertIn("define RUBY_REMOVE_RUBYGEMS\n", mk)
+        self.assertIn(
+            "ifneq ($(BR2_PACKAGE_RUBY_RUBYGEMS),y)\n"
+            "RUBY_POST_INSTALL_TARGET_HOOKS += RUBY_REMOVE_RUBYGEMS\n"
+            "endif\n",
+            mk,
+        )
+
+    def test_customize_is_idempotent(self) -> None:
+        """A second --customize run leaves Config.in and ruby.mk unchanged."""
+        self._apply()
+        cfg = (self.ruby / "Config.in").read_text()
+        mk = (self.ruby / "ruby.mk").read_text()
+        self._apply()
+        self.assertEqual((self.ruby / "Config.in").read_text(), cfg)
+        self.assertEqual((self.ruby / "ruby.mk").read_text(), mk)
+        self.assertEqual(cfg.count("config BR2_PACKAGE_RUBY_VERSION_OVERRIDE"), 1)
+        self.assertEqual(mk.count("ifneq ($(call qstrip,$(BR2_PACKAGE_RUBY_VERSION"), 1)
+
+    def test_unexpected_conf_opts_block_is_an_error(self) -> None:
+        """A ruby.mk whose RUBY_CONF_OPTS block changed upstream stops the run."""
+        (self.ruby / "ruby.mk").write_text(
+            _RUBY_MK_2026_08.replace("--disable-zjit", "--disable-other")
+        )
+        with self.assertRaises(SystemExit), redirect_stdout(StringIO()):
+            self._apply()
+
+    def test_setup_config_requests_ruby_override(self) -> None:
+        """The installer fragment requests ruby 4.0.7."""
+        setup = (
+            Path(__file__).resolve().parent / "buildrootConf" / "setup.config"
+        ).read_text(encoding="utf-8")
+        self.assertIn('BR2_PACKAGE_RUBY_VERSION_OVERRIDE="4.0.7"', setup)
+
+
 PATCHES = Path(__file__).resolve().parent / "customizeBuildroot" / "patches"
 HASH_HEADER = ["#", "# Automatically generated file; DO NOT EDIT.", "#"]
 

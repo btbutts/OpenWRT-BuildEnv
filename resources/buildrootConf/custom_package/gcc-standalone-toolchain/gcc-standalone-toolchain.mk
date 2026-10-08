@@ -108,6 +108,15 @@ define GCC_STANDALONE_TOOLCHAIN_RELOCATE
 	fi
 endef
 
+# Glibc / Kernel Headers Integration
+# Copy OpenSSL, Zlib, and other development headers to the target rootfs
+define GCC_STANDALONE_TOOLCHAIN_INSTALL_HEADERS
+        echo ">>> gcc-standalone-toolchain: copying development headers to target rootfs"
+        mkdir -p $(TARGET_DIR)/usr/include
+        cp -a $(STAGING_DIR)/usr/include/. $(TARGET_DIR)/usr/include/
+		cp -a $(STAGING_DIR)/usr/lib/pkgconfig/. $(TARGET_DIR)/usr/lib/pkgconfig/ 2>/dev/null || true
+endef
+
 # Short names (gcc, g++, ld, …) live next to the tuple-prefixed binaries
 # in /opt/.../bin. Relative links stay inside the SDK; nothing is written
 # to /usr/bin. profile.d appends that bin dir so a login shell finds gcc
@@ -151,6 +160,7 @@ define GCC_STANDALONE_TOOLCHAIN_INSTALL_TARGET_CMDS
 	cp -a $(@D)/. $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/
 	echo ">>> gcc-standalone-toolchain: copy complete"
 	$(GCC_STANDALONE_TOOLCHAIN_RELOCATE)
+	$(GCC_STANDALONE_TOOLCHAIN_INSTALL_HEADERS)
 	$(GCC_STANDALONE_TOOLCHAIN_SHORT_LINKS)
 	echo ">>> gcc-standalone-toolchain: writing /etc/profile.d/gcc-standalone-toolchain.sh"
 	printf '%s\n' \
@@ -164,27 +174,30 @@ define GCC_STANDALONE_TOOLCHAIN_INSTALL_TARGET_CMDS
 	echo ">>> gcc-standalone-toolchain: target install finished"
 endef
 
-# .NET (libcoreclr) and PowerShell load libstdc++/libgcc_s at run time.
-# Append the SDK's runtime lib dirs to the target's ld.so.conf. Only
-# <tuple>/lib64 and <tuple>/lib are added, never <tuple>/sysroot: that
-# holds the SDK's own libc and would shadow the image's. The tuple is
-# read from the tree (x86_64-... / aarch64-...), not hardcoded, and
-# lines are added once so a rebuild does not duplicate them.
-define GCC_STANDALONE_TOOLCHAIN_APPEND_LDCONFIG
-	$(INSTALL) -d -m 0755 $(TARGET_DIR)/etc
-	touch $(TARGET_DIR)/etc/ld.so.conf
-	for d in lib $$(cd $(GCC_STANDALONE_TOOLCHAIN_DESTDIR) && \
-			ls -d *-linux-*/lib64 *-linux-*/lib 2>/dev/null); do \
-		if [ "$$d" != lib ] && \
-		   ! ls $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/$$d/libstdc++.so* >/dev/null 2>&1; then \
-			continue; \
-		fi; \
-		p=$(GCC_STANDALONE_TOOLCHAIN_RUNTIME_PREFIX)/$$d; \
-		grep -qxF "$$p" $(TARGET_DIR)/etc/ld.so.conf || \
-			echo "$$p" >> $(TARGET_DIR)/etc/ld.so.conf; \
-		echo ">>> gcc-standalone-toolchain: ld.so.conf += $$p"; \
-	done
-endef
-GCC_STANDALONE_TOOLCHAIN_POST_INSTALL_TARGET_HOOKS += GCC_STANDALONE_TOOLCHAIN_APPEND_LDCONFIG
+# DISABLED: .NET (libcoreclr) and PowerShell load libstdc++/libgcc_s at run
+# time. This block appended the SDK's runtime lib dirs to the target's
+# /etc/ld.so.conf, but Buildroot's target-finalize aborts on that file
+# ("we shouldn't have a /etc/ld.so.conf file"), glibc only reads
+# /etc/ld.so.cache (nothing here runs ldconfig), and the image already has
+# the same libstdc++.so.6.0.34 and libgcc_s.so.1 on the default library paths.
+# Re-enable only if dotnet or pwsh fail to find them on a booted image, and
+# then use LD_LIBRARY_PATH in profile.d or a post-build script, not this.
+#
+# define GCC_STANDALONE_TOOLCHAIN_APPEND_LDCONFIG
+# 	$(INSTALL) -d -m 0755 $(TARGET_DIR)/etc
+# 	touch $(TARGET_DIR)/etc/ld.so.conf
+# 	for d in lib $$(cd $(GCC_STANDALONE_TOOLCHAIN_DESTDIR) && \
+# 			ls -d *-linux-*/lib64 *-linux-*/lib 2>/dev/null); do \
+# 		if [ "$$d" != lib ] && \
+# 		   ! ls $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/$$d/libstdc++.so* >/dev/null 2>&1; then \
+# 			continue; \
+# 		fi; \
+# 		p=$(GCC_STANDALONE_TOOLCHAIN_RUNTIME_PREFIX)/$$d; \
+# 		grep -qxF "$$p" $(TARGET_DIR)/etc/ld.so.conf || \
+# 			echo "$$p" >> $(TARGET_DIR)/etc/ld.so.conf; \
+# 		echo ">>> gcc-standalone-toolchain: ld.so.conf += $$p"; \
+# 	done
+# endef
+# GCC_STANDALONE_TOOLCHAIN_POST_INSTALL_TARGET_HOOKS += GCC_STANDALONE_TOOLCHAIN_APPEND_LDCONFIG
 
 $(eval $(generic-package))
