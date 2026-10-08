@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 from pathlib import Path
 
@@ -9,69 +10,51 @@ from ..util import (
     drop_br_no_check_hash_for,
     insert_before_meson_eval,
     insert_kconfig_after_if,
+    tabbed,
     write_if_changed,
 )
 
-SYSTEMD_VERSION_OVERRIDE_KCONFIG = (
-    "config BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE\n"
-    '\tstring "systemd version override"\n'
-    '\tdefault ""\n'
-    "\thelp\n"
-    "\t  Leave empty to keep Buildroot's packaged systemd (258.7\n"
-    "\t  in 2026.08). Set to a release tag without the leading\n"
-    '\t  "v", for example 262, to download that version instead.\n'
-    "\n"
-    "\t  systemd 260+ dropped SysV meson options; 262 also dropped\n"
-    "\t  libidn and libiptc. The makefile strips those -D flags\n"
-    "\t  when an override is set so meson configure can succeed.\n"
-    "\t  Missing tarball sha256 lines are filled by\n"
-    "\t  package/fetch-hash.mk.\n"
-)
+SYSTEMD_VERSION_OVERRIDE_KCONFIG = tabbed(inspect.cleandoc("""
+    config BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE
+        string "systemd version override"
+        default ""
+        help
+          Leave empty to keep Buildroot's packaged systemd (258.7
+          in 2026.08). Set to a release tag without the leading
+          "v", for example 262, to download that version instead.
 
-SYSTEMD_VERSION_OVERRIDE_MK = (
-    "SYSTEMD_VERSION_STOCK := $(SYSTEMD_VERSION)\n"
-    "ifneq ($(call qstrip,$(BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE)),)\n"
-    "SYSTEMD_VERSION = $(call qstrip,$(BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE))\n"
-    "endif\n"
-)
+          systemd 260+ dropped SysV meson options; 262 also dropped
+          libidn and libiptc. The makefile strips those -D flags
+          when an override is set so meson configure can succeed.
+          Missing tarball sha256 lines are filled by
+          package/fetch-hash.mk.
+"""))
+
+SYSTEMD_VERSION_OVERRIDE_MK = inspect.cleandoc("""
+    SYSTEMD_VERSION_STOCK := $(SYSTEMD_VERSION)
+    ifneq ($(call qstrip,$(BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE)),)
+    SYSTEMD_VERSION = $(call qstrip,$(BR2_PACKAGE_SYSTEMD_VERSION_OVERRIDE))
+    endif
+""") + "\n"
 
 # Previous --customize inserted this hash-skip. Strip it on re-run.
-SYSTEMD_OVERRIDE_MK_TAIL_LEGACY = (
-    "\n"
-    "# Override tarball: skip packaged hashes. systemd 260+ dropped SysV\n"
-    "# meson options; 262 also dropped libidn and libiptc.\n"
-    "ifneq ($(SYSTEMD_VERSION),$(SYSTEMD_VERSION_STOCK))\n"
-    "BR_NO_CHECK_HASH_FOR += systemd-$(SYSTEMD_VERSION).tar.gz\n"
-    "SYSTEMD_CONF_OPTS := $(filter-out "
-    "-Dsysvinit-path= -Dsysvrcnd-path= "
-    "-Dlibidn=enabled -Dlibidn=disabled "
-    "-Dlibiptc=enabled -Dlibiptc=disabled,"
-    "$(SYSTEMD_CONF_OPTS))\n"
-    "HOST_SYSTEMD_CONF_OPTS := $(filter-out "
-    "-Dsysvinit-path='' -Dsysvinit-path= "
-    "-Dlibidn=enabled -Dlibidn=disabled "
-    "-Dlibiptc=enabled -Dlibiptc=disabled,"
-    "$(HOST_SYSTEMD_CONF_OPTS))\n"
-    "endif\n"
-)
+SYSTEMD_OVERRIDE_MK_TAIL_LEGACY = "\n" + inspect.cleandoc("""
+    # Override tarball: skip packaged hashes. systemd 260+ dropped SysV
+    # meson options; 262 also dropped libidn and libiptc.
+    ifneq ($(SYSTEMD_VERSION),$(SYSTEMD_VERSION_STOCK))
+    BR_NO_CHECK_HASH_FOR += systemd-$(SYSTEMD_VERSION).tar.gz
+    SYSTEMD_CONF_OPTS := $(filter-out -Dsysvinit-path= -Dsysvrcnd-path= -Dlibidn=enabled -Dlibidn=disabled -Dlibiptc=enabled -Dlibiptc=disabled,$(SYSTEMD_CONF_OPTS))
+    HOST_SYSTEMD_CONF_OPTS := $(filter-out -Dsysvinit-path='' -Dsysvinit-path= -Dlibidn=enabled -Dlibidn=disabled -Dlibiptc=enabled -Dlibiptc=disabled,$(HOST_SYSTEMD_CONF_OPTS))
+    endif
+""") + "\n"
 
-SYSTEMD_OVERRIDE_MK_TAIL = (
-    "\n"
-    "# systemd 260+ dropped SysV meson options; 262 also dropped libidn "
-    "and libiptc.\n"
-    "ifneq ($(SYSTEMD_VERSION),$(SYSTEMD_VERSION_STOCK))\n"
-    "SYSTEMD_CONF_OPTS := $(filter-out "
-    "-Dsysvinit-path= -Dsysvrcnd-path= "
-    "-Dlibidn=enabled -Dlibidn=disabled "
-    "-Dlibiptc=enabled -Dlibiptc=disabled,"
-    "$(SYSTEMD_CONF_OPTS))\n"
-    "HOST_SYSTEMD_CONF_OPTS := $(filter-out "
-    "-Dsysvinit-path='' -Dsysvinit-path= "
-    "-Dlibidn=enabled -Dlibidn=disabled "
-    "-Dlibiptc=enabled -Dlibiptc=disabled,"
-    "$(HOST_SYSTEMD_CONF_OPTS))\n"
-    "endif\n"
-)
+SYSTEMD_OVERRIDE_MK_TAIL = "\n" + inspect.cleandoc("""
+    # systemd 260+ dropped SysV meson options; 262 also dropped libidn and libiptc.
+    ifneq ($(SYSTEMD_VERSION),$(SYSTEMD_VERSION_STOCK))
+    SYSTEMD_CONF_OPTS := $(filter-out -Dsysvinit-path= -Dsysvrcnd-path= -Dlibidn=enabled -Dlibidn=disabled -Dlibiptc=enabled -Dlibiptc=disabled,$(SYSTEMD_CONF_OPTS))
+    HOST_SYSTEMD_CONF_OPTS := $(filter-out -Dsysvinit-path='' -Dsysvinit-path= -Dlibidn=enabled -Dlibidn=disabled -Dlibiptc=enabled -Dlibiptc=disabled,$(HOST_SYSTEMD_CONF_OPTS))
+    endif
+""") + "\n"
 
 
 def patch_systemd_config_in(path: Path) -> None:

@@ -2,40 +2,41 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 from pathlib import Path
 
 from ..util import (
     drop_br_no_check_hash_for,
     insert_kconfig_after_if,
+    tabbed,
     write_if_changed,
 )
 
-LINUX_PAM_VERSION_OVERRIDE_KCONFIG = (
-    "config BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE\n"
-    '\tstring "linux-pam version override"\n'
-    '\tdefault ""\n'
-    "\thelp\n"
-    "\t  Leave empty to keep Buildroot's packaged linux-pam\n"
-    "\t  (1.7.2 in 2026.08). Set to a release such as 1.7.3\n"
-    "\t  to download that version instead. Missing tarball\n"
-    "\t  sha256 lines are filled by package/fetch-hash.mk.\n"
-)
+LINUX_PAM_VERSION_OVERRIDE_KCONFIG = tabbed(inspect.cleandoc("""
+    config BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE
+        string "linux-pam version override"
+        default ""
+        help
+          Leave empty to keep Buildroot's packaged linux-pam
+          (1.7.2 in 2026.08). Set to a release such as 1.7.3
+          to download that version instead. Missing tarball
+          sha256 lines are filled by package/fetch-hash.mk.
+"""))
 
-LINUX_PAM_VERSION_OVERRIDE_MK = (
-    "LINUX_PAM_VERSION_STOCK := $(LINUX_PAM_VERSION)\n"
-    "ifneq ($(call qstrip,$(BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE)),)\n"
-    "LINUX_PAM_VERSION = $(call qstrip,$(BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE))\n"
-    "endif\n"
-)
+LINUX_PAM_VERSION_OVERRIDE_MK = inspect.cleandoc("""
+    LINUX_PAM_VERSION_STOCK := $(LINUX_PAM_VERSION)
+    ifneq ($(call qstrip,$(BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE)),)
+    LINUX_PAM_VERSION = $(call qstrip,$(BR2_PACKAGE_LINUX_PAM_VERSION_OVERRIDE))
+    endif
+""") + "\n"
 
 # Previous --customize inserted this hash-skip. Strip it on re-run.
-LINUX_PAM_OVERRIDE_MK_TAIL_LEGACY = (
-    "\n"
-    "ifneq ($(LINUX_PAM_VERSION),$(LINUX_PAM_VERSION_STOCK))\n"
-    "BR_NO_CHECK_HASH_FOR += $(LINUX_PAM_SOURCE)\n"
-    "endif\n"
-)
+LINUX_PAM_OVERRIDE_MK_TAIL_LEGACY = "\n" + inspect.cleandoc("""
+    ifneq ($(LINUX_PAM_VERSION),$(LINUX_PAM_VERSION_STOCK))
+    BR_NO_CHECK_HASH_FOR += $(LINUX_PAM_SOURCE)
+    endif
+""") + "\n"
 
 
 def patch_linux_pam_config_in(path: Path) -> None:

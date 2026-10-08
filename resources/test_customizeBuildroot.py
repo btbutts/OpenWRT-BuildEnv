@@ -1034,8 +1034,6 @@ class UpdateKernelSupportTests(unittest.TestCase):
         self.assertNotIn("BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2", toolchain)
         self.assertIn('default "7.1.13" if BR2_LINUX_KERNEL_LATEST_VERSION', linux)
         self.assertIn("config BR2_KEEP_MAN_PAGES_DOCS", (self.br / "Config.in").read_text())
-        self.assertFalse((self.br / "linux" / "from-6.17" / "get-hash.mk").exists())
-        self.assertNotIn("include linux/from-6.17/get-hash.mk", (self.br / "Makefile").read_text())
         self.assertTrue((self.br / "package" / "fetch-hash.mk").is_file())
         self.assertIn("include package/fetch-hash.mk", (self.br / "Makefile").read_text())
 
@@ -1077,21 +1075,12 @@ class UpdateKernelSupportTests(unittest.TestCase):
 
     def test_installs_fetch_hash_mk(self) -> None:
         """--update-kernel-support installs package/fetch-hash.mk at Makefile EOF."""
-        leftover = self.br / "linux" / "from-6.17" / "get-hash.mk"
-        leftover.write_text("# leftover\n", encoding="utf-8")
         makefile_path = self.br / "Makefile"
-        makefile_path.write_text(
-            makefile_path.read_text(encoding="utf-8").rstrip("\n")
-            + "\n\n# JIT-append kernel.org sha256 lines for linux/linux-headers tarballs.\n"
-            "include linux/from-6.17/get-hash.mk\n",
-            encoding="utf-8",
-        )
         self._apply()
         dest = self.br / "package" / "fetch-hash.mk"
         helper = self.br / "package" / "fetch_hash_helper.py"
         self.assertTrue(dest.is_file())
         self.assertTrue(helper.is_file())
-        self.assertFalse(leftover.exists())
         text = dest.read_text(encoding="utf-8")
         self.assertNotIn("FETCH_HASH_METHOD_", text)
         self.assertNotIn("cdn.kernel.org", text)
@@ -1120,7 +1109,6 @@ class UpdateKernelSupportTests(unittest.TestCase):
         makefile = makefile_path.read_text(encoding="utf-8")
         self.assertIn("include package/fetch-hash.mk", makefile)
         self.assertEqual(makefile.count("include package/fetch-hash.mk"), 1)
-        self.assertNotIn("include linux/from-6.17/get-hash.mk", makefile)
         self.assertGreater(
             makefile.index("include package/fetch-hash.mk"),
             makefile.index("include $(sort $(wildcard package/*/*.mk))"),

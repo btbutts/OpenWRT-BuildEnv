@@ -5,15 +5,17 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-KEEP_MAN_OPTION_BLOCK = inspect.cleandoc("""
+from ..util import tabbed
+
+KEEP_MAN_OPTION_BLOCK = tabbed(inspect.cleandoc("""
     config BR2_KEEP_MAN_PAGES_DOCS
-	    bool "Keep manual pages and documentation on target"
-	    default n
-	    help
-	      By default, Buildroot aggressively purges all man, info,
-	      and doc directories during target finalization to save
-	      space. Enable this option to retain full documentation.
-""")
+        bool "Keep manual pages and documentation on target"
+        default n
+        help
+          By default, Buildroot aggressively purges all man, info,
+          and doc directories during target finalization to save
+          space. Enable this option to retain full documentation.
+"""))
 
 USR_DOC_TOKEN = "$(TARGET_DIR)/usr/doc"
 USR_DOC_COMMENT = "#\trm -rf $(TARGET_DIR)/usr/doc\n"
@@ -54,11 +56,7 @@ def patch_config_in(path: Path) -> None:
     insert = []
     if last_endmenu > 0 and lines[last_endmenu - 1].strip() != "":
         insert.append("\n")
-    insert.append(
-        KEEP_MAN_OPTION_BLOCK
-        if KEEP_MAN_OPTION_BLOCK.endswith("\n")
-        else KEEP_MAN_OPTION_BLOCK + "\n"
-    )
+    insert.append(KEEP_MAN_OPTION_BLOCK)
     insert.append("\n")
     lines[last_endmenu:last_endmenu] = insert
     path.write_text("".join(lines))

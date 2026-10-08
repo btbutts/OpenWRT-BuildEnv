@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 from pathlib import Path
 
-from ..util import write_if_changed
+from ..util import tabbed, write_if_changed
 from .fetch_hash import write_fetch_hash_mk
 
 # 2026.08 latest kernel/headers stop at 7.1.13. --update-kernel-support
@@ -35,22 +36,22 @@ def patch_kernel_headers_host(path: Path) -> None:
         count=1,
     )
 
-    old_headers = (
-        "config BR2_KERNEL_HEADERS_7_1\n"
-        '\tbool "Linux 7.1.x kernel headers"\n'
-        "\tselect BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1\n"
-        "\tselect BR2_KERNEL_HEADERS_LATEST\n"
-    )
-    new_headers = (
-        "config BR2_KERNEL_HEADERS_7_1\n"
-        '\tbool "Linux 7.1.x kernel headers"\n'
-        "\tselect BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1\n"
-        "\n"
-        "config BR2_KERNEL_HEADERS_7_2\n"
-        '\tbool "Linux 7.2.x kernel headers"\n'
-        "\tselect BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2\n"
-        "\tselect BR2_KERNEL_HEADERS_LATEST\n"
-    )
+    old_headers = tabbed(inspect.cleandoc("""
+        config BR2_KERNEL_HEADERS_7_1
+            bool "Linux 7.1.x kernel headers"
+            select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1
+            select BR2_KERNEL_HEADERS_LATEST
+    """))
+    new_headers = tabbed(inspect.cleandoc("""
+        config BR2_KERNEL_HEADERS_7_1
+            bool "Linux 7.1.x kernel headers"
+            select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1
+
+        config BR2_KERNEL_HEADERS_7_2
+            bool "Linux 7.2.x kernel headers"
+            select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2
+            select BR2_KERNEL_HEADERS_LATEST
+    """))
     if "config BR2_KERNEL_HEADERS_7_2\n" not in text:
         if old_headers not in text:
             raise SystemExit(
@@ -58,20 +59,20 @@ def patch_kernel_headers_host(path: Path) -> None:
             )
         text = text.replace(old_headers, new_headers, 1)
 
-    old_custom = (
-        "config BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_7_1\n"
-        '\tbool "7.1.x or later"\n'
-        "\tselect BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1\n"
-    )
-    new_custom = (
-        "config BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_7_2\n"
-        '\tbool "7.2.x or later"\n'
-        "\tselect BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2\n"
-        "\n"
-        "config BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_7_1\n"
-        '\tbool "7.1.x"\n'
-        "\tselect BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1\n"
-    )
+    old_custom = tabbed(inspect.cleandoc("""
+        config BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_7_1
+            bool "7.1.x or later"
+            select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1
+    """))
+    new_custom = tabbed(inspect.cleandoc("""
+        config BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_7_2
+            bool "7.2.x or later"
+            select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2
+
+        config BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_7_1
+            bool "7.1.x"
+            select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1
+    """))
     if "config BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_7_2\n" not in text:
         if old_custom not in text:
             raise SystemExit(
@@ -105,22 +106,22 @@ def patch_toolchain_headers_at_least(path: Path) -> None:
     text = path.read_text()
     original = text
 
-    old_at_least = (
-        "config BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1\n"
-        "\tbool\n"
-        "\tselect BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_0\n"
-        "\tselect BR2_TOOLCHAIN_HEADERS_LATEST\n"
-    )
-    new_at_least = (
-        "config BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1\n"
-        "\tbool\n"
-        "\tselect BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_0\n"
-        "\n"
-        "config BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2\n"
-        "\tbool\n"
-        "\tselect BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1\n"
-        "\tselect BR2_TOOLCHAIN_HEADERS_LATEST\n"
-    )
+    old_at_least = tabbed(inspect.cleandoc("""
+        config BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1
+            bool
+            select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_0
+            select BR2_TOOLCHAIN_HEADERS_LATEST
+    """))
+    new_at_least = tabbed(inspect.cleandoc("""
+        config BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1
+            bool
+            select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_0
+
+        config BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2
+            bool
+            select BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1
+            select BR2_TOOLCHAIN_HEADERS_LATEST
+    """))
     if "config BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2\n" not in text:
         if old_at_least not in text:
             raise SystemExit(
@@ -129,17 +130,17 @@ def patch_toolchain_headers_at_least(path: Path) -> None:
             )
         text = text.replace(old_at_least, new_at_least, 1)
 
-    old_string = (
-        "config BR2_TOOLCHAIN_HEADERS_AT_LEAST\n"
-        "\tstring\n"
-        '\tdefault "7.1" if BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1\n'
-    )
-    new_string = (
-        "config BR2_TOOLCHAIN_HEADERS_AT_LEAST\n"
-        "\tstring\n"
-        '\tdefault "7.2" if BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2\n'
-        '\tdefault "7.1" if BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1\n'
-    )
+    old_string = tabbed(inspect.cleandoc("""
+        config BR2_TOOLCHAIN_HEADERS_AT_LEAST
+            string
+            default "7.1" if BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1
+    """))
+    new_string = tabbed(inspect.cleandoc("""
+        config BR2_TOOLCHAIN_HEADERS_AT_LEAST
+            string
+            default "7.2" if BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2
+            default "7.1" if BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_1
+    """))
     if '\tdefault "7.2" if BR2_TOOLCHAIN_HEADERS_AT_LEAST_7_2\n' not in text:
         if old_string not in text:
             raise SystemExit(

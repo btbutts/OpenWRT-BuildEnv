@@ -25,24 +25,39 @@
 # host one without any check.
 FETCH_HASH_HOST_PYTHON = $(HOST_DIR)/bin/python3
 FETCH_HASH_HOST_CA = $(HOST_DIR)/etc/ssl/certs/ca-certificates.crt
-FETCH_HASH_PYTHON ?= $(if $(and $(wildcard $(FETCH_HASH_HOST_PYTHON)),$(wildcard $(FETCH_HASH_HOST_CA))),$(FETCH_HASH_HOST_PYTHON),/usr/bin/python3)
+FETCH_HASH_HOST_READY = $(and $(wildcard $(FETCH_HASH_HOST_PYTHON)),$(wildcard $(FETCH_HASH_HOST_CA)))
+FETCH_HASH_PYTHON ?= $(if $(FETCH_HASH_HOST_READY),$(FETCH_HASH_HOST_PYTHON),/usr/bin/python3)
 
 # Published checksum files. <key> is $(PKG)_RAWNAME for a package's main
 # tarball, or the file's basename for an EXTRA_DOWNLOADS entry. Values are
 # expanded per package, so $(FETCH_HASH_VERSION) is that package's version.
 FETCH_HASH_VERSION = $(patsubst v%,%,$(call qstrip,$($(PKG)_VERSION)))
 FETCH_HASH_MAJOR = $(firstword $(subst ., ,$(FETCH_HASH_VERSION)))
-FETCH_HASH_BOOTLIN = https://toolchains.bootlin.com/downloads/releases/toolchains/$(GCC_STANDALONE_TOOLCHAIN_BOOTLIN_ARCH)/tarballs
+FETCH_HASH_BOOTLIN_ARCH = $(GCC_STANDALONE_TOOLCHAIN_BOOTLIN_ARCH)
+FETCH_HASH_BOOTLIN_LIBC = $(GCC_STANDALONE_TOOLCHAIN_BOOTLIN_LIBC)
+FETCH_HASH_BOOTLIN_FILE = $(FETCH_HASH_BOOTLIN_ARCH)--$(FETCH_HASH_BOOTLIN_LIBC)--stable-$(FETCH_HASH_VERSION)
+FETCH_HASH_BOOTLIN = https://toolchains.bootlin.com/downloads/releases/toolchains/$(FETCH_HASH_BOOTLIN_ARCH)/tarballs
+FETCH_HASH_BRUSH = https://github.com/reubeno/brush/releases/download/brush-shell-v$(FETCH_HASH_VERSION)
 
 FETCH_HASH_URL.rust = https://static.rust-lang.org/dist/rustc-$(FETCH_HASH_VERSION)-src.tar.xz.sha256
 FETCH_HASH_URL.usbutils = https://www.kernel.org/pub/linux/utils/usb/usbutils/sha256sums.asc
 FETCH_HASH_URL.linux = https://www.kernel.org/pub/linux/kernel/v$(FETCH_HASH_MAJOR).x/sha256sums.asc
 FETCH_HASH_URL.linux-headers = $(FETCH_HASH_URL.linux)
-FETCH_HASH_URL.gcc-standalone-toolchain = $(FETCH_HASH_BOOTLIN)/$(GCC_STANDALONE_TOOLCHAIN_BOOTLIN_ARCH)--$(GCC_STANDALONE_TOOLCHAIN_BOOTLIN_LIBC)--stable-$(FETCH_HASH_VERSION).sha256
-FETCH_HASH_URL.brush-docs.tar.gz = https://github.com/reubeno/brush/releases/download/brush-shell-v$(FETCH_HASH_VERSION)/brush-docs.tar.gz.sha256
+FETCH_HASH_URL.gcc-standalone-toolchain = $(FETCH_HASH_BOOTLIN)/$(FETCH_HASH_BOOTLIN_FILE).sha256
+FETCH_HASH_URL.brush-docs.tar.gz = $(FETCH_HASH_BRUSH)/brush-docs.tar.gz.sha256
 
 # The main tarball is the only file $(PKG)_DOWNLOAD_POST_PROCESS applies to.
-FETCH_HASH_POST = $(if $(strip $($(PKG)_DOWNLOAD_POST_PROCESS)),$(TOPDIR)/support/download/$(strip $($(PKG)_DOWNLOAD_POST_PROCESS))-post-process -n $($(PKG)_DL_SUBDIR)-$($(PKG)_VERSION) $($(PKG)_DOWNLOAD_POST_PROCESS_OPTS))
+FETCH_HASH_POST_CMD = \
+	$(TOPDIR)/support/download/$(strip $($(PKG)_DOWNLOAD_POST_PROCESS))-post-process \
+	-n $($(PKG)_DL_SUBDIR)-$($(PKG)_VERSION) \
+	$($(PKG)_DOWNLOAD_POST_PROCESS_OPTS)
+FETCH_HASH_POST = $(if $(strip $($(PKG)_DOWNLOAD_POST_PROCESS)),$(FETCH_HASH_POST_CMD))
+
+# The package's main tarball: its file name, its URL (when it has a site), and
+# the FETCH_HASH_ONE call for it.
+FETCH_HASH_SRC = $(strip $($(PKG)_SOURCE))
+FETCH_HASH_SRC_URL = $(if $(strip $($(PKG)_SITE)),$(strip $($(PKG)_SITE))/$(FETCH_HASH_SRC))
+FETCH_HASH_SRC_ONE = $(call FETCH_HASH_ONE,$($(PKG)_RAWNAME),$(FETCH_HASH_SRC),$(FETCH_HASH_SRC_URL),$(FETCH_HASH_POST))
 
 # An EXTRA_DOWNLOADS entry is a full URL, or a name relative to the package site.
 FETCH_HASH_EXTRA_URL = $(if $(findstring ://,$(1)),$(1),$(strip $($(PKG)_SITE))/$(notdir $(1)))
@@ -68,8 +83,9 @@ define FETCH_HASH
 		[ -f "$$f" ] && { hash_file="$$f"; break; }; \
 	done; \
 	[ -n "$$hash_file" ] || hash_file="$($(PKG)_PKGDIR)/$($(PKG)_RAWNAME).hash"; \
-	$(if $(strip $($(PKG)_SOURCE)),$(call FETCH_HASH_ONE,$($(PKG)_RAWNAME),$(strip $($(PKG)_SOURCE)),$(if $(strip $($(PKG)_SITE)),$(strip $($(PKG)_SITE))/$(strip $($(PKG)_SOURCE))),$(FETCH_HASH_POST))) \
-	$(foreach u,$($(PKG)_EXTRA_DOWNLOADS),$(call FETCH_HASH_ONE,$(notdir $(u)),$(notdir $(u)),$(call FETCH_HASH_EXTRA_URL,$(u)),))
+	$(if $(FETCH_HASH_SRC),$(FETCH_HASH_SRC_ONE)) \
+	$(foreach u,$($(PKG)_EXTRA_DOWNLOADS), \
+		$(call FETCH_HASH_ONE,$(notdir $(u)),$(notdir $(u)),$(call FETCH_HASH_EXTRA_URL,$(u)),))
 endef
 
 ifeq ($(FETCH_HASH_REGISTERED),)

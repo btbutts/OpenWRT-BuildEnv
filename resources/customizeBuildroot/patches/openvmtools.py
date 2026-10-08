@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 from pathlib import Path
 
@@ -14,33 +15,33 @@ OPENVMTOOLS_C23_PATCH_STEM = "c23-MXUserTryAcquireForceFail"
 OPENVMTOOLS_C23_OLD = "Bool (*MXUserTryAcquireForceFail)() = NULL;"
 OPENVMTOOLS_C23_NEW = "Bool (*MXUserTryAcquireForceFail)(const char *) = NULL;"
 OPENVMTOOLS_PATCH_INDEX_RE = re.compile(r"^(\d{4})-")
-OPENVMTOOLS_C23_PATCH = """\
-lib/lock/ul.c: match MXUserTryAcquireForceFail to its prototype
+OPENVMTOOLS_C23_PATCH = inspect.cleandoc("""
+    lib/lock/ul.c: match MXUserTryAcquireForceFail to its prototype
 
-GCC 15 defaults to C23, where an empty parameter list is (void).
-The definition in ul.c was Bool (*)(void) while ulInt.h declares
-Bool (*)(const char *).
+    GCC 15 defaults to C23, where an empty parameter list is (void).
+    The definition in ul.c was Bool (*)(void) while ulInt.h declares
+    Bool (*)(const char *).
 
-Upstream: https://github.com/vmware/open-vm-tools/pull/751
-(incorporated in open-vm-tools 13.0.0)
+    Upstream: https://github.com/vmware/open-vm-tools/pull/751
+    (incorporated in open-vm-tools 13.0.0)
 
----
- lib/lock/ul.c | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
+    ---
+     lib/lock/ul.c | 2 +-
+     1 file changed, 1 insertion(+), 1 deletion(-)
 
-diff --git a/lib/lock/ul.c b/lib/lock/ul.c
---- a/lib/lock/ul.c
-+++ b/lib/lock/ul.c
-@@ -28,7 +28,7 @@
- static Bool mxInPanic = FALSE;  // track when involved in a panic
- static Bool mxUserCollectLockingTree = FALSE;
+    diff --git a/lib/lock/ul.c b/lib/lock/ul.c
+    --- a/lib/lock/ul.c
+    +++ b/lib/lock/ul.c
+    @@ -28,7 +28,7 @@
+     static Bool mxInPanic = FALSE;  // track when involved in a panic
+     static Bool mxUserCollectLockingTree = FALSE;
 
--Bool (*MXUserTryAcquireForceFail)() = NULL;
-+Bool (*MXUserTryAcquireForceFail)(const char *) = NULL;
+    -Bool (*MXUserTryAcquireForceFail)() = NULL;
+    +Bool (*MXUserTryAcquireForceFail)(const char *) = NULL;
 
- static MX_Rank (*MXUserMxCheckRank)(void) = NULL;
- static void (*MXUserMxLockLister)(void) = NULL;
-"""
+     static MX_Rank (*MXUserMxCheckRank)(void) = NULL;
+     static void (*MXUserMxLockLister)(void) = NULL;
+""") + "\n"
 
 
 def openvmtools_c23_patch_present(pkg_dir: Path) -> bool:

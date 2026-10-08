@@ -2,35 +2,36 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 from pathlib import Path
 
-from ..util import append_kconfig_if_block, write_if_changed
+from ..util import append_kconfig_if_block, tabbed, write_if_changed
 
 # The version Buildroot 2026.08 packages. It is the Kconfig default of
 # BR2_PACKAGE_ESPFLASH_VERSION_OVERRIDE and the only version the bail!
 # patch is written for.
 ESPFLASH_STOCK_VERSION = "4.0.1"
 
-ESPFLASH_VERSION_OVERRIDE_KCONFIG = (
-    "config BR2_PACKAGE_ESPFLASH_VERSION_OVERRIDE\n"
-    '\tstring "espflash version override"\n'
-    f'\tdefault "{ESPFLASH_STOCK_VERSION}"\n'
-    "\thelp\n"
-    f"\t  Buildroot's packaged espflash is {ESPFLASH_STOCK_VERSION} (2026.08).\n"
-    '\t  Set to a release tag without the leading "v", for example\n'
-    "\t  4.1.0, to download that version instead. Missing tarball\n"
-    "\t  sha256 lines are filled by package/fetch-hash.mk.\n"
-    "\n"
-    "\t  The esp_defmt.rs bail! patch added by --customize applies\n"
-    f"\t  to {ESPFLASH_STOCK_VERSION} only.\n"
-)
+ESPFLASH_VERSION_OVERRIDE_KCONFIG = tabbed(inspect.cleandoc(f"""
+    config BR2_PACKAGE_ESPFLASH_VERSION_OVERRIDE
+        string "espflash version override"
+        default "{ESPFLASH_STOCK_VERSION}"
+        help
+          Buildroot's packaged espflash is {ESPFLASH_STOCK_VERSION} (2026.08).
+          Set to a release tag without the leading "v", for example
+          4.1.0, to download that version instead. Missing tarball
+          sha256 lines are filled by package/fetch-hash.mk.
 
-ESPFLASH_VERSION_OVERRIDE_MK = (
-    "ifneq ($(call qstrip,$(BR2_PACKAGE_ESPFLASH_VERSION_OVERRIDE)),)\n"
-    "ESPFLASH_VERSION = $(call qstrip,$(BR2_PACKAGE_ESPFLASH_VERSION_OVERRIDE))\n"
-    "endif\n"
-)
+          The esp_defmt.rs bail! patch added by --customize applies
+          to {ESPFLASH_STOCK_VERSION} only.
+"""))
+
+ESPFLASH_VERSION_OVERRIDE_MK = inspect.cleandoc("""
+    ifneq ($(call qstrip,$(BR2_PACKAGE_ESPFLASH_VERSION_OVERRIDE)),)
+    ESPFLASH_VERSION = $(call qstrip,$(BR2_PACKAGE_ESPFLASH_VERSION_OVERRIDE))
+    endif
+""") + "\n"
 
 # espflash 4.0.1 writes `Ok(None) => bail!(DefmtError::NoDefmtData),` in
 # esp_defmt.rs. miette's bail! expands to `return Err(..);`, and rustc 1.99
@@ -45,31 +46,31 @@ ESPFLASH_PATCH_STEM = "esp_defmt-bail-in-statement-position"
 ESPFLASH_OLD = "Ok(None) => bail!(DefmtError::NoDefmtData),"
 ESPFLASH_NEW = "bail!(DefmtError::NoDefmtData);"
 ESPFLASH_PATCH_INDEX_RE = re.compile(r"^(\d{4})-")
-ESPFLASH_BAIL_PATCH = """\
-esp_defmt: call bail! in statement position
+ESPFLASH_BAIL_PATCH = inspect.cleandoc("""
+    esp_defmt: call bail! in statement position
 
-rustc 1.99 warns that the trailing semicolon in miette's bail! is
-phased out in expression position
-(semicolon_in_expressions_from_non_local_macros, rust-lang/rust#79813).
-Wrap the match arm in a block so bail! is a statement.
+    rustc 1.99 warns that the trailing semicolon in miette's bail! is
+    phased out in expression position
+    (semicolon_in_expressions_from_non_local_macros, rust-lang/rust#79813).
+    Wrap the match arm in a block so bail! is a statement.
 
----
- espflash/src/cli/monitor/parser/esp_defmt.rs | 4 +++-
- 1 file changed, 3 insertions(+), 1 deletion(-)
+    ---
+     espflash/src/cli/monitor/parser/esp_defmt.rs | 4 +++-
+     1 file changed, 3 insertions(+), 1 deletion(-)
 
-diff --git a/espflash/src/cli/monitor/parser/esp_defmt.rs b/espflash/src/cli/monitor/parser/esp_defmt.rs
---- a/espflash/src/cli/monitor/parser/esp_defmt.rs
-+++ b/espflash/src/cli/monitor/parser/esp_defmt.rs
-@@ -130,5 +130,7 @@
-         let table = match Table::parse(elf) {
-             Ok(Some(table)) => table,
--            Ok(None) => bail!(DefmtError::NoDefmtData),
-+            Ok(None) => {
-+                bail!(DefmtError::NoDefmtData);
-+            }
-             Err(e) => return Err(DefmtError::TableParseFailed).with_context(|| e),
-         };
-"""
+    diff --git a/espflash/src/cli/monitor/parser/esp_defmt.rs b/espflash/src/cli/monitor/parser/esp_defmt.rs
+    --- a/espflash/src/cli/monitor/parser/esp_defmt.rs
+    +++ b/espflash/src/cli/monitor/parser/esp_defmt.rs
+    @@ -130,5 +130,7 @@
+             let table = match Table::parse(elf) {
+                 Ok(Some(table)) => table,
+    -            Ok(None) => bail!(DefmtError::NoDefmtData),
+    +            Ok(None) => {
+    +                bail!(DefmtError::NoDefmtData);
+    +            }
+                 Err(e) => return Err(DefmtError::TableParseFailed).with_context(|| e),
+             };
+""") + "\n"
 
 
 def espflash_bail_patch_present(patch_dir: Path) -> bool:

@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 from ..util import kconfig_package_symbol
 
 CUSTOM_LATE_INCLUDE_MARKER = "include package/custom-late.mk"
-CUSTOM_LATE_INCLUDE_BLOCK = (
-    "\n# Custom packages: on a full image build, delay each custom\n"
-    "# package's -install until every other selected package is installed.\n"
-    "# Isolated `make <pkg>` is unchanged.\n"
-    f"{CUSTOM_LATE_INCLUDE_MARKER}\n"
-)
+CUSTOM_LATE_INCLUDE_BLOCK = "\n" + inspect.cleandoc(f"""
+    # Custom packages: on a full image build, delay each custom
+    # package's -install until every other selected package is installed.
+    # Isolated `make <pkg>` is unchanged.
+    {CUSTOM_LATE_INCLUDE_MARKER}
+""") + "\n"
 # Install with the rest of $(PACKAGES), not in the late group.
 LATE_CUSTOM_SKIP_PACKAGES = frozenset({"uutils-coreutils"})
 # Library-like custom packages that other custom packages depend on.

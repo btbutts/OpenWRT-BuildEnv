@@ -7,6 +7,17 @@ from pathlib import Path
 _MESON_PACKAGE_EVAL = "$(eval $(meson-package))\n"
 
 
+def tabbed(block: str) -> str:
+    """
+    Turn an ``inspect.cleandoc`` block into text for a tab-indented file.
+
+    Write the block with four spaces per indent level and every run of four
+    spaces becomes a real tab, so Kconfig and Makefile fragments need no
+    ``\\t`` escapes. ``cleandoc`` drops the trailing newline; it is restored.
+    """
+    return block.replace("    ", "\t") + "\n"
+
+
 def kconfig_package_symbol(package_name: str) -> str:
     """
     Return the ``BR2_PACKAGE_*`` symbol for a package directory name.
