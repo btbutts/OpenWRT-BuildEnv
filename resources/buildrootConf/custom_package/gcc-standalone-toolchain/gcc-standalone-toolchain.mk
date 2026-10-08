@@ -164,4 +164,27 @@ define GCC_STANDALONE_TOOLCHAIN_INSTALL_TARGET_CMDS
 	echo ">>> gcc-standalone-toolchain: target install finished"
 endef
 
+# .NET (libcoreclr) and PowerShell load libstdc++/libgcc_s at run time.
+# Append the SDK's runtime lib dirs to the target's ld.so.conf. Only
+# <tuple>/lib64 and <tuple>/lib are added, never <tuple>/sysroot: that
+# holds the SDK's own libc and would shadow the image's. The tuple is
+# read from the tree (x86_64-... / aarch64-...), not hardcoded, and
+# lines are added once so a rebuild does not duplicate them.
+define GCC_STANDALONE_TOOLCHAIN_APPEND_LDCONFIG
+	$(INSTALL) -d -m 0755 $(TARGET_DIR)/etc
+	touch $(TARGET_DIR)/etc/ld.so.conf
+	for d in lib $$(cd $(GCC_STANDALONE_TOOLCHAIN_DESTDIR) && \
+			ls -d *-linux-*/lib64 *-linux-*/lib 2>/dev/null); do \
+		if [ "$$d" != lib ] && \
+		   ! ls $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/$$d/libstdc++.so* >/dev/null 2>&1; then \
+			continue; \
+		fi; \
+		p=$(GCC_STANDALONE_TOOLCHAIN_RUNTIME_PREFIX)/$$d; \
+		grep -qxF "$$p" $(TARGET_DIR)/etc/ld.so.conf || \
+			echo "$$p" >> $(TARGET_DIR)/etc/ld.so.conf; \
+		echo ">>> gcc-standalone-toolchain: ld.so.conf += $$p"; \
+	done
+endef
+GCC_STANDALONE_TOOLCHAIN_POST_INSTALL_TARGET_HOOKS += GCC_STANDALONE_TOOLCHAIN_APPEND_LDCONFIG
+
 $(eval $(generic-package))

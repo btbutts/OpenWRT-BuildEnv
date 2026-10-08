@@ -219,16 +219,21 @@ class CustomPackageInstallTests(unittest.TestCase):
         self.assertEqual(pkg_config, pkg_config_before)
         self.assertNotIn('menu "Custom Packages"', pkg_config)
         late = (self.br / "package" / "custom-late.mk").read_text()
-        self.assertIn("LATE_CUSTOM_PACKAGES += gcc-standalone-toolchain", late)
+        self.assertIn("LATE_CUSTOM_PACKAGES_LIBS += gcc-standalone-toolchain", late)
+        self.assertNotIn("LATE_CUSTOM_PACKAGES += gcc-standalone-toolchain", late)
         self.assertIn("LATE_CUSTOM_PACKAGES += groff", late)
         self.assertIn("LATE_CUSTOM_PACKAGES += hexedit", late)
         self.assertNotIn("LATE_CUSTOM_PACKAGES += uutils-coreutils", late)
         self.assertIn("ifeq ($(BR2_PACKAGE_GCC_STANDALONE_TOOLCHAIN),y)", late)
+        self.assertLess(
+            late.index("LATE_CUSTOM_PACKAGES_LIBS :="),
+            late.index("LATE_CUSTOM_PACKAGES :="),
+        )
         self.assertIn(
-            "gcc-standalone-toolchain-install: "
-            "$(filter-out gcc-standalone-toolchain,$(LATE_CUSTOM_PACKAGES))",
+            "$(eval $(p)-install: $(LATE_CUSTOM_PACKAGES_LIBS))",
             late,
         )
+        self.assertNotIn("gcc-standalone-toolchain-install:", late)
         makefile = (self.br / "Makefile").read_text()
         self.assertIn("include package/custom-late.mk", makefile)
         self.assertIn("include package/fetch-hash.mk", makefile)
@@ -290,11 +295,13 @@ class Br2ExternalLayoutTests(unittest.TestCase):
         self.assertIn('menu "Custom Packages"', text)
         for name in (
             "brush",
+            "dotnet10",
             "fdfind",
             "gcc-standalone-toolchain",
             "groff",
             "hexedit",
             "jaq",
+            "pwsh7",
             "python-uv",
             "sharutils",
             "sudo-rs",
@@ -364,6 +371,8 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             "brush",
             "jaq",
             "python-uv",
+            "dotnet10",
+            "pwsh7",
         ):
             pkg_mk = (self.ROOT / name / f"{name}.mk").read_text()
             self.assertNotIn("FETCH_HASH", pkg_mk)
@@ -1087,6 +1096,7 @@ class UpdateKernelSupportTests(unittest.TestCase):
         self.assertNotIn("FETCH_HASH_METHOD_", text)
         self.assertNotIn("cdn.kernel.org", text)
         self.assertIn("$(HOST_DIR)/bin/python3", text)
+        self.assertIn("$(HOST_DIR)/etc/ssl/certs/ca-certificates.crt", text)
         self.assertIn("FETCH_HASH_PYTHON ?=", text)
         self.assertNotIn(" python3 \"", text)
         self.assertIn("fetch_hash_helper.py", text)
@@ -2163,11 +2173,10 @@ showpython:
                 self._ok(self._make(extra=extra))
                 self.assertFalse(self.hash_file.exists())
 
-    def test_python_is_host_when_installed_else_distro(self) -> None:
-        """Host python3 wins once it exists; before that the distro one is used."""
-        result = self._make("showpython", python=None)
-        self._ok(result)
-        self.assertEqual(result.stdout.strip(), "/usr/bin/python3")
+    def test_python_is_host_only_once_its_ca_bundle_is_installed(self) -> None:
+        """Host python3 needs host-ca-certificates too; otherwise the distro one."""
+        distro = "/usr/bin/python3"
+        self.assertEqual(self._make("showpython", python=None).stdout.strip(), distro)
         host = self.td / "host" / "bin" / "python3"
         host.parent.mkdir(parents=True)
         marker = self.td / "host-python-used"
@@ -2176,6 +2185,17 @@ showpython:
             encoding="utf-8",
         )
         host.chmod(0o755)
+        certs = self.td / "host" / "etc" / "ssl" / "certs"
+        certs.mkdir(parents=True)
+        for label in ("python3 but an empty certs dir", "python3 and symlinks only"):
+            with self.subTest(label):
+                (certs / "abcd1234.0").unlink(missing_ok=True)
+                if "symlinks" in label:
+                    (certs / "abcd1234.0").symlink_to("missing.pem")
+                result = self._make("showpython", python=None)
+                self.assertEqual(result.stdout.strip(), distro)
+        (certs / "abcd1234.0").unlink(missing_ok=True)
+        (certs / "ca-certificates.crt").write_text("bundle\n", encoding="utf-8")
         self.assertEqual(
             self._make("showpython", python=None).stdout.strip(), str(host)
         )
@@ -2184,6 +2204,14 @@ showpython:
             self._ok(self._make(site=origin.base, python=None))
         self.assertTrue(marker.exists())
         self.assertEqual(self._lines(), [_sha256_line(payload, "demo-1.2.3.tar.gz")])
+
+    def test_ca_bundle_without_host_python_uses_the_distro_one(self) -> None:
+        """The bundle alone is not enough; host/bin/python3 must exist as well."""
+        certs = self.td / "host" / "etc" / "ssl" / "certs"
+        certs.mkdir(parents=True)
+        (certs / "ca-certificates.crt").write_text("bundle\n", encoding="utf-8")
+        result = self._make("showpython", python=None)
+        self.assertEqual(result.stdout.strip(), "/usr/bin/python3")
 
     def test_ignores_python3_from_the_host_tree(self) -> None:
         """A python3 that EXTRA_ENV puts first on PATH is never the interpreter.

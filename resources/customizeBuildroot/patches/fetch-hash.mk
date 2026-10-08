@@ -16,11 +16,16 @@
 #
 ################################################################################
 
-# Buildroot's host python3 once it is installed (it trusts the CA bundle from
-# host-ca-certificates), else the distro one. Chosen per package, when its hook
-# runs, so it follows build order. Never a bare "python3": EXTRA_ENV puts
-# host/bin first on PATH, so that would pick the host one without any check.
-FETCH_HASH_PYTHON ?= $(or $(wildcard $(HOST_DIR)/bin/python3),/usr/bin/python3)
+# Buildroot's host python3, but only once host-ca-certificates has installed
+# its bundle (written last, so it marks a finished install): the host OpenSSL
+# has no other trust store, and without it every https download fails with
+# CERTIFICATE_VERIFY_FAILED. Until then, the distro python3. Chosen per
+# package, when its hook runs, so it follows build order. Never a bare
+# "python3": EXTRA_ENV puts host/bin first on PATH, so that would pick the
+# host one without any check.
+FETCH_HASH_HOST_PYTHON = $(HOST_DIR)/bin/python3
+FETCH_HASH_HOST_CA = $(HOST_DIR)/etc/ssl/certs/ca-certificates.crt
+FETCH_HASH_PYTHON ?= $(if $(and $(wildcard $(FETCH_HASH_HOST_PYTHON)),$(wildcard $(FETCH_HASH_HOST_CA))),$(FETCH_HASH_HOST_PYTHON),/usr/bin/python3)
 
 # Published checksum files. <key> is $(PKG)_RAWNAME for a package's main
 # tarball, or the file's basename for an EXTRA_DOWNLOADS entry. Values are

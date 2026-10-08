@@ -1,0 +1,50 @@
+config BR2_PACKAGE_PWSH7
+	bool "pwsh7"
+	depends on BR2_x86_64 || BR2_aarch64
+	depends on BR2_TOOLCHAIN_USES_GLIBC
+	depends on BR2_TOOLCHAIN_BUILDROOT
+	depends on BR2_INSTALL_LIBSTDCPP
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	depends on BR2_USE_WCHAR
+	depends on BR2_USE_MMU
+	depends on !BR2_STATIC_LIBS
+	select BR2_PACKAGE_CA_CERTIFICATES
+	select BR2_PACKAGE_OPENSSL
+	select BR2_PACKAGE_ZLIB
+	select BR2_PACKAGE_BROTLI
+	select BR2_PACKAGE_ICU
+	select BR2_TARGET_TZ_INFO
+	select BR2_PACKAGE_LINUX_PAM
+	select BR2_PACKAGE_GCC_STANDALONE_TOOLCHAIN
+	help
+	  PowerShell 7 (precompiled linux-x64 / linux-arm64 tarball
+	  from PowerShell/PowerShell GitHub releases), extracted to
+	  /opt/pwsh7 with /usr/bin/pwsh pointing at it.
+
+	  The tarball bundles its own .NET runtime, so it does not
+	  need BR2_PACKAGE_DOTNET10. PowerShell 7.6 is built on .NET 10.
+
+	  Needs glibc: the Microsoft tarballs are not built for
+	  musl or uClibc.
+
+	  https://github.com/PowerShell/PowerShell
+
+if BR2_PACKAGE_PWSH7
+
+config BR2_PACKAGE_PWSH7_VERSION
+	string "pwsh7 version (GitHub tag without v)"
+	default "7.6.6"
+	help
+	  PowerShell release without the leading v, for example
+	  7.6.6. Leave this unset to use that default.
+
+	  If pwsh7.hash does not yet list that tarball, its sha256
+	  is appended at download time.
+
+endif
+
+comment "pwsh7 needs an x86-64/aarch64 glibc Buildroot toolchain with C++, threads, wchar and dynamic libs"
+	depends on BR2_x86_64 || BR2_aarch64
+	depends on !BR2_TOOLCHAIN_USES_GLIBC || !BR2_TOOLCHAIN_BUILDROOT || \
+		!BR2_INSTALL_LIBSTDCPP || !BR2_TOOLCHAIN_HAS_THREADS || \
+		!BR2_USE_WCHAR || BR2_STATIC_LIBS
