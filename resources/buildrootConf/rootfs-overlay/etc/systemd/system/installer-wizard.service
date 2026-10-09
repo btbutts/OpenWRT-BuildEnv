@@ -1,24 +1,32 @@
 [Unit]
 Description=OpenWRT installer wizard
-Documentation=file:///usr/bin/wizard.sh
+Documentation=file:///usr/bin/openwrt-install-wizard.sh
 After=installer-bootlog.service dev-tty1.device systemd-udevd.service
 Wants=installer-bootlog.service
 # Maintenance GRUB entry: installer.mode=shell — skip wizard, leave tty1 to getty.
 ConditionKernelCommandLine=!installer.mode=shell
-ConditionPathExists=/usr/bin/wizard.sh
+ConditionPathExists=/usr/bin/openwrt-install-wizard.sh
 Conflicts=console-getty.service getty@tty1.service serial-getty@tty1.service
 Before=console-getty.service getty@tty1.service serial-getty@tty1.service
 # Conflicts only *stops* getty. Start console-getty again so login follows
 # kernel console= (tty1, ttyS0, …) from GRUB.
 OnSuccess=console-getty.service
 OnFailure=console-getty.service
+# wizard <-> root shell is a loop (see console-getty.service.d/installer.conf
+# and /usr/lib/installer/shell-exit.sh); never trip the default start limit.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
 RemainAfterExit=no
+# Launcher: prompt_toolkit wizard, falling back to /usr/bin/wizard.sh
+# (or forced with installer.ui=bash). Both exit 0 on cancel.
 # dialog Cancel is 1; treat that as a normal end so the unit is not FAILED.
 SuccessExitStatus=0 1
-ExecStart=/usr/bin/wizard.sh
+Environment=TERM=linux
+# Boot shows the usual systemd/kernel output; silence both before the TUI draws.
+ExecStartPre=-/usr/lib/installer/quiet-console.sh
+ExecStart=/usr/bin/openwrt-install-wizard.sh
 StandardInput=tty
 StandardOutput=tty
 StandardError=tty

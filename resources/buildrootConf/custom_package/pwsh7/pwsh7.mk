@@ -53,14 +53,14 @@ BR2_STRIP_EXCLUDE_DIRS += opt/pwsh7
 endif
 endif
 
-# $(@D) also holds Buildroot's .stamp_* files; leave them out. The
-# tarball does not set the execute bit on pwsh.
+# $(@D) also holds Buildroot's .stamp_*, .applied_patches_list and
+# .files-list* files; CUSTOM_PACKAGE_TARGET_DIR_EXCLUDES (external.mk) keeps
+# them out of the rootfs. The tarball does not set the execute bit on pwsh.
 define PWSH7_INSTALL_TARGET_CMDS
 	rm -rf $(TARGET_DIR)/opt/pwsh7
 	$(INSTALL) -d -m 0755 $(TARGET_DIR)/opt/pwsh7
-	cp -a $(@D)/. $(TARGET_DIR)/opt/pwsh7/
-	rm -f $(TARGET_DIR)/opt/pwsh7/.stamp_* \
-		$(TARGET_DIR)/opt/pwsh7/.applied_patches_list
+	rsync -aH $(CUSTOM_PACKAGE_TARGET_DIR_EXCLUDES) \
+		$(@D)/ $(TARGET_DIR)/opt/pwsh7/
 	chmod 0755 $(TARGET_DIR)/opt/pwsh7/pwsh
 	ln -sf /opt/pwsh7/pwsh $(TARGET_DIR)/usr/bin/pwsh
 endef

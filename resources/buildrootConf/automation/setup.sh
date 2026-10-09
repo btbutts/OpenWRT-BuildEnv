@@ -84,15 +84,15 @@ setup_stop_console_log() {
 }
 
 copy_setup_log_to_media() {
-    local dest_root=""
+    local dest_root="" dest
     if awk -v d="/src" '$2 == d { found=1 } END { exit !found }' /proc/mounts; then
         dest_root=/src
     elif installer_mount /src; then
         dest_root=/src
     fi
     [ -n "$dest_root" ] || return 0
-    mkdir -p "${dest_root}/boot/logs" 2>/dev/null || true
-    cp -f "$SETUP_LOG" "${dest_root}/boot/logs/installer-setup.log" 2>/dev/null || true
+    dest="$(installer_log_dest "$dest_root" installer-setup.log)" || return 0
+    cp -f "$SETUP_LOG" "$dest" 2>/dev/null || true
     sync
 }
 
@@ -424,6 +424,12 @@ fi
 
 # Confirm execution pass
 echo "--> Installation successfully completed! Remove your installer media."
+if [ "${INSTALLER_NONINTERACTIVE:-0}" = "1" ]; then
+    # openwrt_install_wizard runs us as a subprocess and asks the
+    # reboot-or-shell question itself.
+    echo ok > /run/installer-result 2>/dev/null || true
+    exit 0
+fi
 if dialog --yesno "Confirm YES to reboot the system immediately, or NO to launch an emergency maintenance shell:" 10 60; then
     echo "System will reboot in 5 seconds..."
     sleep 5

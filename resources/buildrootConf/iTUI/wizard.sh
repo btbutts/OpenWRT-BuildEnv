@@ -33,7 +33,14 @@ fi
 # --- Tier 1: Identify the installer boot disk (USB/SD/NVMe) ---
 # installer-bootlog.service already discovered this and wrote /run/installer-media-id.
 # Do not mount target NVMe/SATA partitions here.
-installer_load_identity || installer_discover || true
+if ! installer_load_identity && ! installer_discover; then
+    # Fail closed: without an identity the boot media would be offered as a
+    # RAID target. Make the operator acknowledge that before listing disks.
+    if ! dialog --defaultno --yes-label "Continue" --no-label "Exit" --yesno \
+        "WARNING: the installer boot media could not be identified.\n\nThe disk list may include the USB/SD/NVMe device you booted from. Do NOT select it.\n\nContinue anyway?" 12 64; then
+        user_quit
+    fi
+fi
 
 # --- Tier 2: Real, non-zero disks only; never nbd/loop/0B; never boot media ---
 DIALOG_ARGS=()

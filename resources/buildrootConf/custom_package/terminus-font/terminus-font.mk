@@ -29,18 +29,17 @@ else
 TERMINUS_FONT_PYTHON = $(call suitable-host-package,python3,$(BR2_PYTHON3_VERSION_MIN) python3 python)
 endif
 
-# Variables go to make, not ./configure. psf = console fonts only, no X11 tools
-TERMINUS_FONT_MAKE_OPTS = \
-	INT="$(TERMINUS_FONT_PYTHON)" \
-	psfdir=/usr/share/consolefonts
+# Variables go to make, not ./configure. psf + psf-vgaw = console fonts, no X11 tools
+TERMINUS_FONT_MAKE_OPTS = INT="$(TERMINUS_FONT_PYTHON)"
 
 define TERMINUS_FONT_BUILD_CMDS
-	$(TARGET_MAKE_ENV) $(MAKE) -C $(@D) $(TERMINUS_FONT_MAKE_OPTS) psf
+	$(TARGET_MAKE_ENV) $(MAKE) -C $(@D) $(TERMINUS_FONT_MAKE_OPTS) psf psf-vgaw
 endef
 
+# Not upstream's install-psf: it keeps the ter-* names
 define TERMINUS_FONT_INSTALL_TARGET_CMDS
-	$(TARGET_MAKE_ENV) $(MAKE) -C $(@D) $(TERMINUS_FONT_MAKE_OPTS) \
-		DESTDIR=$(TARGET_DIR) install-psf
+	$(TERMINUS_FONT_PYTHON) $(TERMINUS_FONT_PKGDIR)/install-psf.py $(@D) \
+		$(TARGET_DIR)/usr/share/consolefonts
 endef
 
 $(eval $(generic-package))

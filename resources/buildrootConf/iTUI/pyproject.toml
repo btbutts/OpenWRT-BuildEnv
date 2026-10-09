@@ -1,0 +1,37 @@
+# Lint/test configuration for the installer wizard sources. This file lives next to
+# (not inside) openwrt_install_wizard/ so it is never copied into the image.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D203",    # incompatible with D211 (no blank line before class docstring)
+    "D213",    # incompatible with D212 (summary on the first docstring line)
+    "COM812",  # conflicts with the ruff formatter
+    "ISC001",  # conflicts with the ruff formatter
+    "CPY001",  # no per-file copyright header policy in this repo
+]
+
+[tool.ruff.lint.per-file-ignores]
+# pytest idiom: plain `assert`, and literal expected values.
+"tests/**" = ["S101", "PLR2004"]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pyright]
+include = ["openwrt_install_wizard", "tests"]
+# Resolve `openwrt_install_wizard` from the tests (the package is installed to
+# /usr/lib/installer on the image and is not pip-installed on the host).
+extraPaths = ["."]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+# The workspace interpreter (see OpenWRT.BuildEnv.code-workspace).
+venvPath = "../../.."
+venv = ".OpenWRT.Builder.venv"

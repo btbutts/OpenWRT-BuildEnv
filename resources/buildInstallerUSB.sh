@@ -56,7 +56,7 @@ grub_mods=(
     font date datetime datehook cat boot chain cpuid
     setpci read serial terminfo terminal hello progress
     usb usb_keyboard usbserial_common usbserial_ftdi
-    usbserial_pl2303 usbserial_usbdebug usbtest
+    usbserial_pl2303 usbserial_usbdebug usbtest probe
 )
 grub-mkimage \
     -d /usr/lib/grub/x86_64-efi \

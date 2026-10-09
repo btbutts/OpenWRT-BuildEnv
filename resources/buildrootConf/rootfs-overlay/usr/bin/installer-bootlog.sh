@@ -6,7 +6,6 @@
 # Never walks target RAID disks. Never loops.
 
 LOG=/run/installer-boot.log
-DEST_REL="boot/logs/installer-boot.log"
 
 FORCE_FLUSH=0
 for arg in "$@"; do
@@ -69,7 +68,7 @@ snapshot_kmsg() {
 }
 
 flush_once() {
-    local was_ro=0 opts dest
+    local was_ro=0 opts dest extra
 
     snapshot_kmsg
     if ! installer_mount "$INSTALLER_MNT"; then
@@ -84,8 +83,7 @@ flush_once() {
         mount -o remount,rw "$INSTALLER_MNT" || return 1
     fi
 
-    mkdir -p "${INSTALLER_MNT}/boot/logs" || return 1
-    dest="${INSTALLER_MNT}/${DEST_REL}"
+    dest="$(installer_log_dest "$INSTALLER_MNT" installer-boot.log)" || return 1
     if [ "$FORCE_FLUSH" = "1" ] && [ -f "$dest" ]; then
         {
             echo "===== installer-bootlog --flush ====="
@@ -97,11 +95,12 @@ flush_once() {
         cp -f "$LOG" "$dest" || return 1
     fi
     if [ -f /var/log/installer-setup.log ]; then
-        cp -f /var/log/installer-setup.log "${INSTALLER_MNT}/boot/logs/installer-setup.log" || true
+        extra="$(installer_log_dest "$INSTALLER_MNT" installer-setup.log)" \
+            && cp -f /var/log/installer-setup.log "$extra" || true
     fi
     if [ -s /var/log/installer-bootlog-wrapper.log ]; then
-        cp -f /var/log/installer-bootlog-wrapper.log \
-            "${INSTALLER_MNT}/boot/logs/installer-bootlog-wrapper.log" || true
+        extra="$(installer_log_dest "$INSTALLER_MNT" installer-bootlog-wrapper.log)" \
+            && cp -f /var/log/installer-bootlog-wrapper.log "$extra" || true
     fi
     sync
 

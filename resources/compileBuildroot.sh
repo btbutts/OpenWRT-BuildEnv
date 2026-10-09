@@ -258,10 +258,17 @@ prepare_overlay() {
     declare -A SCRIPTS_MAP=(
         ["${BUILDROOT_CONF_DIR%/}/iTUI/wizard.sh"]="${BUILDROOT_OVERLAY_DIR}/usr/bin/wizard.sh"
         ["${BUILDROOT_CONF_DIR%/}/automation/setup.sh"]="${BUILDROOT_OVERLAY_DIR}/usr/bin/setup.sh"
+        ["${BUILDROOT_CONF_DIR%/}/iTUI/openwrt-install-wizard.sh"]="${BUILDROOT_OVERLAY_DIR}/usr/bin/openwrt-install-wizard.sh"
+        # A directory source is copied recursively (the Python wizard package).
+        # Lives beside media.sh, not in /usr/bin, so PYTHONPATH stays narrow.
+        ["${BUILDROOT_CONF_DIR%/}/iTUI/openwrt_install_wizard"]="${BUILDROOT_OVERLAY_DIR}/usr/lib/installer/openwrt_install_wizard"
         ["${BUILDROOT_OVERLAY_DIR}/usr/bin/installer-bootlog.sh"]=""
         ["${BUILDROOT_OVERLAY_DIR}/usr/lib/installer/media.sh"]=""
+        ["${BUILDROOT_OVERLAY_DIR}/usr/lib/installer/shell-exit.sh"]=""
         ["${BUILDROOT_OVERLAY_DIR}/usr/lib/installer/bootlog-wrapper.sh"]=""
         ["${BUILDROOT_OVERLAY_DIR}/usr/lib/openwrt-installer/generate-motd.sh"]=""
+        ["${BUILDROOT_OVERLAY_DIR}/root/show-fonts.sh"]=""
+        ["${BUILDROOT_OVERLAY_DIR}/usr/lib/installer/quiet-console.sh"]=""
         ["${BUILDROOT_CONF_DIR%/}/post_build_script/append.sh"]=""
         ["${BUILDROOT_CONF_DIR%/}/post_build_script/set_os_release.sh"]=""
     )
@@ -283,9 +290,13 @@ prepare_overlay() {
 
     for file in "${!SCRIPTS_MAP[@]}"; do
         dest="${SCRIPTS_MAP[$file]}"
-        if [ -f "$file" ]; then
+        if [ -f "$file" ] || [ -d "$file" ]; then
             if [ -n "$dest" ]; then
-                cp "$file" "$dest"
+                # cp -R copies a file or a whole directory; drop the old copy
+                # first so modules removed from the source do not linger.
+                rm -rf "$dest"
+                cp -R "$file" "$dest"
+                find "$dest" -name __pycache__ -type d -prune -exec rm -rf {} +
                 chmod +x "$dest"
                 printf '%s\n\t%s%s%s\n' "Copied and set executable permission:" \
                     "$file" " --> " "$dest"

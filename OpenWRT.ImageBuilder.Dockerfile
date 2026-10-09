@@ -27,17 +27,18 @@ RUN sed -i '/^Components:/ s/$/ non-free/' \
     bc binutils-gold bison ccache ecj fastjar flex \
     build-essential gcc g++ help2man texinfo vim nano \
     libbsd-dev libelf-dev libncurses-dev zlib1g-dev \
-    ncurses-dev python3 bzip2 ca-certificates python3-pip \
+    ncurses-dev python3 bzip2 ca-certificates \
     liblzma-dev mtd-utils meson mold ninja-build \
     pigz pkg-config python3-dev subversion swig dialog \
-    gettext libssl-dev xsltproc wget unzip python3-configobj \
+    gettext libssl-dev xsltproc wget unzip \
     grub-common dosfstools time rsync gawk file \
     python3-setuptools curl net-tools bind9-dnsutils \
     git iputils-ping traceroute mtr rclone zstd \
-    u-boot-tools gzip xxd make libc6-dev pbzip2 \
+    u-boot-tools gzip xxd make libc6-dev pbzip2 kbd \
     gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
     g++-aarch64-linux-gnu device-tree-compiler htop \
     openssh-server sudo zsh lsb-release gnupg m4 \
+    python3-magic python3-configobj python3-pip \
     ${GRUB_PKGS} mtools dosfstools cpio gperf groff \
     python3-matplotlib python3-numpy python3-flake8 \
     && apt-get clean && rm -rf /var/lib/apt/lists/* \

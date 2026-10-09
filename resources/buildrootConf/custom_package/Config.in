@@ -1,5 +1,6 @@
 menu "Custom Packages"
 	source "$BR2_EXTERNAL_OPENWRT_INSTALLER_CUSTOM_PACKAGE_PATH/brush/Config.in"
+	source "$BR2_EXTERNAL_OPENWRT_INSTALLER_CUSTOM_PACKAGE_PATH/debian-console-fonts/Config.in"
 	source "$BR2_EXTERNAL_OPENWRT_INSTALLER_CUSTOM_PACKAGE_PATH/dotnet10/Config.in"
 	source "$BR2_EXTERNAL_OPENWRT_INSTALLER_CUSTOM_PACKAGE_PATH/fdfind/Config.in"
 	source "$BR2_EXTERNAL_OPENWRT_INSTALLER_CUSTOM_PACKAGE_PATH/gcc-standalone-toolchain/Config.in"
@@ -10,5 +11,6 @@ menu "Custom Packages"
 	source "$BR2_EXTERNAL_OPENWRT_INSTALLER_CUSTOM_PACKAGE_PATH/pwsh7/Config.in"
 	source "$BR2_EXTERNAL_OPENWRT_INSTALLER_CUSTOM_PACKAGE_PATH/sharutils/Config.in"
 	source "$BR2_EXTERNAL_OPENWRT_INSTALLER_CUSTOM_PACKAGE_PATH/sudo-rs/Config.in"
+	source "$BR2_EXTERNAL_OPENWRT_INSTALLER_CUSTOM_PACKAGE_PATH/terminus-font/Config.in"
 	source "$BR2_EXTERNAL_OPENWRT_INSTALLER_CUSTOM_PACKAGE_PATH/uutils-coreutils/Config.in"
 endmenu

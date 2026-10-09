@@ -295,6 +295,7 @@ class Br2ExternalLayoutTests(unittest.TestCase):
         self.assertIn('menu "Custom Packages"', text)
         for name in (
             "brush",
+            "debian-console-fonts",
             "dotnet10",
             "fdfind",
             "gcc-standalone-toolchain",
@@ -305,6 +306,7 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             "python-uv",
             "sharutils",
             "sudo-rs",
+            "terminus-font",
             "uutils-coreutils",
         ):
             self.assertIn(
@@ -373,6 +375,8 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             "python-uv",
             "dotnet10",
             "pwsh7",
+            "terminus-font",
+            "debian-console-fonts",
         ):
             pkg_mk = (self.ROOT / name / f"{name}.mk").read_text()
             self.assertNotIn("FETCH_HASH", pkg_mk)
@@ -411,6 +415,241 @@ class Br2ExternalLayoutTests(unittest.TestCase):
         self.assertNotIn("ln -sf", mk)
         self.assertNotIn("host-cargo", mk)
         self.assertIn("$(call github,sharkdp,fd,v$(FDFIND_VERSION))", mk)
+
+    def test_only_package_makefiles_are_named_mk(self) -> None:
+        """external.mk includes every */*.mk, so helper makefiles must not end in .mk."""
+        for mk in self.ROOT.glob("*/*.mk"):
+            self.assertEqual(mk.name, f"{mk.parent.name}.mk", str(mk))
+
+    def test_debian_console_fonts_package(self) -> None:
+        """debian-console-fonts runs console-setup's own Makefile for chosen faces and code sets."""
+        text = (self.ROOT / "debian-console-fonts" / "Config.in").read_text(encoding="utf-8")
+        self.assertIn("config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS\n", text)
+        self.assertIn("select BR2_PACKAGE_KBD", text)
+        self.assertIn("depends on BR2_USE_MMU", text)
+        self.assertIn("depends on BR2_TOOLCHAIN_GCC_AT_LEAST_4_9", text)
+        self.assertIn('default "1.242~deb13u1"', text)
+        self.assertIn('default "4.49.1"', text)
+        mk = (self.ROOT / "debian-console-fonts" / "debian-console-fonts.mk").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "DEBIAN_CONSOLE_FONTS_SOURCE = console-setup_$(DEBIAN_CONSOLE_FONTS_VERSION).tar.xz", mk
+        )
+        self.assertIn("https://deb.debian.org/debian/pool/main/c/console-setup", mk)
+        self.assertIn("DEBIAN_CONSOLE_FONTS_DEPENDENCIES = kbd\n", mk)
+        self.assertNotIn("host-python3", mk)
+        # Terminus comes from its own release, only when that face is on.
+        self.assertIn("ifeq ($(BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_TERMINUS),y)", mk)
+        self.assertIn("DEBIAN_CONSOLE_FONTS_EXTRA_DOWNLOADS = https://downloads.sourceforge.net", mk)
+        self.assertIn("'*/ter-u*.bdf'", mk)
+        self.assertIn("-f $(DEBIAN_CONSOLE_FONTS_PKGDIR)/select.makefile", mk)
+        self.assertIn("rsync -a --include='*.psf.gz' --exclude='*'", mk)
+        # The skip list is wired in but empty, so TerminusBoldVGA14/16 are built.
+        self.assertIn('SKIP_PATTERNS="$(DEBIAN_CONSOLE_FONTS_SKIP_PATTERNS)"', mk)
+        self.assertNotRegex(mk, r"(?m)^DEBIAN_CONSOLE_FONTS_SKIP_PATTERNS\s*=")
+        self.assertNotIn("FETCH_HASH", mk)
+        self.assertEqual(
+            cb.kconfig_package_symbol("debian-console-fonts"),
+            "BR2_PACKAGE_DEBIAN_CONSOLE_FONTS",
+        )
+        setup = (
+            Path(__file__).resolve().parent / "buildrootConf" / "setup.config"
+        ).read_text(encoding="utf-8")
+        self.assertIn("BR2_PACKAGE_DEBIAN_CONSOLE_FONTS=y", setup)
+
+    def test_debian_console_fonts_every_option_is_wired(self) -> None:
+        """Every face and code set option in Config.in is used by the makefile."""
+        import re
+
+        text = (self.ROOT / "debian-console-fonts" / "Config.in").read_text(encoding="utf-8")
+        mk = (self.ROOT / "debian-console-fonts" / "debian-console-fonts.mk").read_text(
+            encoding="utf-8"
+        )
+        options = re.findall(r"^config (BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_\w+)$", text, re.M)
+        self.assertGreaterEqual(len(options), 20)
+        for option in options:
+            self.assertIn(option, mk, option)
+
+    @unittest.skipUnless(shutil.which("make"), "make not installed")
+    def test_debian_console_fonts_select_mk(self) -> None:
+        """select.makefile picks fonts by code set and face, honours the skip list."""
+        select_mk = self.ROOT / "debian-console-fonts" / "select.makefile"
+        stub = (
+            "fntdir ?= $(shell pwd)\n"
+            "GOOD_FONT_NAMES := Uni2-Terminus16 Uni2-TerminusBold20x10 "
+            "Uni2-TerminusBoldVGA16 Uni2-TerminusBoldVGA14 Uni2-DejaVu30x16 "
+            "Lat15-Fixed16 Lat15-Terminus16 Greek-VGA16 FullGreek-VGA16 "
+            "Lat2-Fixed13 CyrKoi-Fixed16\n"
+            "%.psf.gz: ; touch $@\n"
+        )
+
+        def selected(codesets: str, faces: str, skip: str = "") -> set[str]:
+            with tempfile.TemporaryDirectory() as tmp:
+                (Path(tmp) / "Makefile").write_text(stub, encoding="utf-8")
+                (Path(tmp) / "select.makefile").write_text(
+                    select_mk.read_text(encoding="utf-8"), encoding="utf-8"
+                )
+                subprocess.run(
+                    [
+                        "make", "-s", "-C", tmp, "-f", "select.makefile",
+                        f"CODESETS={codesets}", f"FACE_PATTERNS={faces}",
+                        f"SKIP_PATTERNS={skip}", "selected",
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+                return {p.name[: -len(".psf.gz")] for p in Path(tmp).glob("*.psf.gz")}
+
+        self.assertEqual(
+            selected("Uni2 Lat15 Greek", "Terminus% VGA% Fixed%", "TerminusBoldVGA16"),
+            {
+                "Uni2-Terminus16",
+                "Uni2-TerminusBold20x10",
+                "Uni2-TerminusBoldVGA14",
+                "Lat15-Fixed16",
+                "Lat15-Terminus16",
+                "Greek-VGA16",
+            },
+        )
+        # VGA% must not pick up TerminusBoldVGA*, and FullGreek is its own code set.
+        self.assertEqual(selected("Uni2 Greek FullGreek", "VGA%"), {"Greek-VGA16", "FullGreek-VGA16"})
+        self.assertEqual(selected("Uni2", "DejaVu%"), {"Uni2-DejaVu30x16"})
+
+    def test_terminus_font_package(self) -> None:
+        """terminus-font selects kbd and builds only the PSF console fonts."""
+        text = (self.ROOT / "terminus-font" / "Config.in").read_text(encoding="utf-8")
+        self.assertIn("config BR2_PACKAGE_TERMINUS_FONT", text)
+        self.assertIn("select BR2_PACKAGE_KBD", text)
+        self.assertIn("depends on BR2_USE_MMU", text)
+        self.assertIn("depends on BR2_TOOLCHAIN_GCC_AT_LEAST_4_9", text)
+        self.assertIn("config BR2_PACKAGE_TERMINUS_FONT_VERSION", text)
+        self.assertIn('default "4.49.1"', text)
+        mk = (self.ROOT / "terminus-font" / "terminus-font.mk").read_text(
+            encoding="utf-8"
+        )
+        # Buildroot's python3 if already built or the host has none; else the host's.
+        self.assertIn("TERMINUS_FONT_DEPENDENCIES = kbd\n", mk)
+        self.assertIn(
+            "ifneq ($(wildcard $(HOST_DIR)/bin/python3)$(BR2_PYTHON3_HOST_DEPENDENCY),)",
+            mk,
+        )
+        self.assertIn("TERMINUS_FONT_DEPENDENCIES += host-python3", mk)
+        self.assertNotRegex(mk, r"DEPENDENCIES = [^\n]*host-python3")
+        self.assertIn(
+            "terminus-font-$(TERMINUS_FONT_MAJOR)", mk
+        )
+        self.assertIn("TERMINUS_FONT_SOURCE = terminus-font-$(TERMINUS_FONT_VERSION).tar.gz", mk)
+        self.assertIn('INT="$(TERMINUS_FONT_PYTHON)"', mk)
+        self.assertIn("suitable-host-package,python3", mk)
+        # Installed (renamed) by our script, not upstream's install-psf.
+        self.assertIn("$(TERMINUS_FONT_PYTHON) $(TERMINUS_FONT_PKGDIR)/install-psf.py $(@D)", mk)
+        self.assertIn("$(TARGET_DIR)/usr/share/consolefonts", mk)
+        self.assertNotIn("install-psf install-psf-vgaw", mk)
+        # Console fonts only: the default target would also need bdftopcf.
+        self.assertRegex(
+            mk, r"\$\(MAKE\) -C \$\(@D\) \$\(TERMINUS_FONT_MAKE_OPTS\) psf psf-vgaw\n"
+        )
+        self.assertNotRegex(mk, r"install-pcf|install-otb|BDF2PCF|\bpcf\b")
+        self.assertNotIn("TERMINUS_FONT_CONFIGURE_CMDS", mk)
+        self.assertNotIn("FETCH_HASH", mk)
+        self.assertEqual(
+            cb.kconfig_package_symbol("terminus-font"), "BR2_PACKAGE_TERMINUS_FONT"
+        )
+
+    def test_terminus_font_install_script_renames(self) -> None:
+        """install-psf.py turns ter-<set><height><style> into <Set>-Terminus names."""
+        script = self.ROOT / "terminus-font" / "install-psf.py"
+        built = {
+            "ter-v20n": "Uni-Terminus20x10",
+            "ter-v20b": "Uni-TerminusBold20x10",
+            "ter-v16n": "Uni-Terminus16",
+            "ter-v16v": "Uni-TerminusBoldVGA16",
+            "ter-v14v": "Uni-TerminusBoldVGA14",
+            "ter-v12n": "Uni-Terminus12x6",
+            "ter-v22b": "Uni-TerminusBold22x11",
+            "ter-720n": "Greek-Terminus20x10",
+            "ter-h28n": "Hebrew-Terminus28x14",
+            "ter-i16n": "CP437-Terminus16",
+            "ter-k16b": "KOI8R-TerminusBold16",
+            "ter-m24n": "MIK-Terminus24x12",
+            "ter-116n": "Latin1-Terminus16",
+            "ter-232b": "Latin2-TerminusBold32x16",
+            "ter-914n": "Turkish-Terminus14",
+            "ter-c18n": "Cyrillic-Terminus18x10",
+            "ter-d16n": "Baltic-Terminus16",
+            "ter-g16n": "Latin10-Terminus16",
+            "ter-p16n": "PT154-Terminus16",
+            "ter-u16n": "KOI8U-Terminus16",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst = Path(tmp) / "src", Path(tmp) / "out" / "consolefonts"
+            src.mkdir()
+            for name in built:
+                (src / f"{name}.psf").write_bytes(b"font " + name.encode())
+            (src / "README").write_text("not a font")
+            subprocess.run([sys.executable, str(script), str(src), str(dst)], check=True)
+            self.assertEqual(
+                sorted(p.name for p in dst.iterdir()),
+                sorted(f"{new}.psf.gz" for new in built.values()),
+            )
+            import gzip
+
+            self.assertEqual(
+                gzip.decompress((dst / "Uni-TerminusBoldVGA16.psf.gz").read_bytes()),
+                b"font ter-v16v",
+            )
+            # Same input gives the same bytes (no name or mtime in the gzip header).
+            first = (dst / "Greek-Terminus20x10.psf.gz").read_bytes()
+            os.utime(src / "ter-720n.psf", (1, 1))
+            subprocess.run([sys.executable, str(script), str(src), str(dst)], check=True)
+            self.assertEqual((dst / "Greek-Terminus20x10.psf.gz").read_bytes(), first)
+
+    def test_terminus_font_install_script_rejects_unknown(self) -> None:
+        """An unknown charset or an empty build dir fails instead of installing junk."""
+        script = self.ROOT / "terminus-font" / "install-psf.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst = Path(tmp) / "src", Path(tmp) / "out"
+            src.mkdir()
+            empty = subprocess.run(
+                [sys.executable, str(script), str(src), str(dst)], capture_output=True, text=True
+            )
+            self.assertNotEqual(empty.returncode, 0)
+            (src / "ter-z16n.psf").write_bytes(b"x")
+            bad = subprocess.run(
+                [sys.executable, str(script), str(src), str(dst)], capture_output=True, text=True
+            )
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertIn("unknown charset 'z'", bad.stderr)
+
+    @unittest.skipUnless(shutil.which("make"), "make not installed")
+    def test_terminus_font_major_from_version(self) -> None:
+        """SourceForge's release directory is the version without its last number."""
+        mk = (self.ROOT / "terminus-font" / "terminus-font.mk").read_text(
+            encoding="utf-8"
+        )
+        line = next(
+            ln for ln in mk.splitlines() if ln.startswith("TERMINUS_FONT_MAJOR =")
+        )
+        for version, major in (
+            ("4.49.1", "4.49"),
+            ("4.49", "4.49"),
+            ("4.50.2", "4.50"),
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                makefile = Path(tmp) / "Makefile"
+                makefile.write_text(
+                    f"TERMINUS_FONT_VERSION = {version}\n{line}\n"
+                    "all:\n\t@echo $(TERMINUS_FONT_MAJOR)\n",
+                    encoding="utf-8",
+                )
+                out = subprocess.run(
+                    ["make", "-s", "-f", str(makefile)],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            self.assertEqual(out.stdout.strip(), major, version)
 
     def test_brush_package(self) -> None:
         """brush builds crate brush-shell, installs /usr/bin/brush, and fetches docs."""

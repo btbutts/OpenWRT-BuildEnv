@@ -157,7 +157,8 @@ define GCC_STANDALONE_TOOLCHAIN_INSTALL_TARGET_CMDS
 	rm -rf $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)
 	mkdir -p $(GCC_STANDALONE_TOOLCHAIN_DESTDIR) $(TARGET_DIR)/etc/profile.d
 	echo ">>> gcc-standalone-toolchain: copying extract (large tree, can take a minute)"
-	cp -a $(@D)/. $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/
+	rsync -aH $(CUSTOM_PACKAGE_TARGET_DIR_EXCLUDES) \
+		$(@D)/ $(GCC_STANDALONE_TOOLCHAIN_DESTDIR)/
 	echo ">>> gcc-standalone-toolchain: copy complete"
 	$(GCC_STANDALONE_TOOLCHAIN_RELOCATE)
 	$(GCC_STANDALONE_TOOLCHAIN_INSTALL_HEADERS)

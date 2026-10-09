@@ -9,6 +9,7 @@
 
 : "${INSTALLER_ID_FILE:=/run/installer-media-id}"
 : "${INSTALLER_MNT:=/run/installer-media}"
+: "${INSTALLER_CMDLINE_FILE:=/proc/cmdline}"
 
 INSTALLER_PART="${INSTALLER_PART:-}"
 INSTALLER_DISK="${INSTALLER_DISK:-}"
@@ -28,6 +29,11 @@ installer_media_here() {
 installer_parent_disk() {
     local part="$1" pk
     [ -n "$part" ] || return 1
+    # Already a whole disk (e.g. a partition-table-less stick): its own parent.
+    if [ -d "/sys/block/${part}" ]; then
+        printf '%s\n' "$part"
+        return 0
+    fi
     pk="$(lsblk -no PKNAME "/dev/${part}" 2>/dev/null | awk 'NF { print $1; exit }')"
     if [ -n "$pk" ]; then
         printf '%s\n' "$pk"
@@ -138,6 +144,54 @@ installer_accept_part() {
     installer_save_identity
 }
 
+# GRUB finds the volume with `search --file` and passes its filesystem UUID
+# as installer.uuid=<uuid> on the kernel line. That names the boot media
+# exactly, so no partition has to be probed or mounted to find it.
+installer_cmdline_uuid() {
+    local -a toks
+    local tok
+    read -r -a toks < "$INSTALLER_CMDLINE_FILE" 2>/dev/null || return 1
+    for tok in "${toks[@]}"; do
+        case "$tok" in
+            installer.uuid=?*)
+                printf '%s\n' "${tok#installer.uuid=}"
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+# Wait for the device carrying installer.uuid to enumerate (slow USB bridges
+# can appear well after udev settles), then record it as the installer media.
+# INSTALLER_UUID_WAIT is the number of one-second polls (default 20; 0 = one try).
+installer_identify_by_uuid() {
+    local uuid dev tries i u
+    uuid="$(installer_cmdline_uuid)" || return 1
+    tries="${INSTALLER_UUID_WAIT:-20}"
+    for ((i = 0; i <= tries; i++)); do
+        dev=""
+        # GRUB prints FAT UUIDs in lower case; blkid/udev use upper case.
+        for u in "$uuid" "${uuid^^}" "${uuid,,}"; do
+            dev="$(blkid -U "$u" 2>/dev/null | head -n1)"
+            if [ -z "$dev" ] && [ -e "/dev/disk/by-uuid/${u}" ]; then
+                dev="$(readlink -f "/dev/disk/by-uuid/${u}" 2>/dev/null)"
+            fi
+            [ -z "$dev" ] || break
+        done
+        if [ -n "$dev" ] && [ -b "$dev" ]; then
+            installer_accept_part "${dev#/dev/}"
+            return 0
+        fi
+        [ "$i" -lt "$tries" ] || break
+        if command -v udevadm >/dev/null 2>&1; then
+            udevadm settle --timeout=1 2>/dev/null || true
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 # Mount $part at $mnt, test installer_media_here, then unmount.
 # Returns 0 only when this partition is installer media.
 installer_probe_part() {
@@ -190,13 +244,22 @@ installer_discover() {
     if installer_scan_mounted; then
         return 0
     fi
+    if installer_identify_by_uuid; then
+        return 0
+    fi
 
     if command -v udevadm >/dev/null 2>&1; then
         udevadm settle --timeout=8 2>/dev/null || true
     fi
 
     while read -r part dtype fstype _; do
-        [ "$dtype" = "part" ] || continue
+        case "$dtype" in
+            part) ;;
+            # Whole-disk filesystem (no partition table): only when it already
+            # carries a payload-type fs, so blank target disks are never probed.
+            disk) installer_fstype_is_payload "$fstype" || continue ;;
+            *) continue ;;
+        esac
         installer_is_allowed_name "$part" || continue
         installer_fstype_is_raid_or_lvm "$fstype" && continue
         disk="$(installer_parent_disk "$part")"
@@ -230,6 +293,13 @@ installer_discover() {
     return 1
 }
 
+# Print "<part> <disk>" for the installer media (used by openwrt_install_wizard).
+installer_print_identity() {
+    installer_discover >/dev/null 2>&1 || return 1
+    installer_load_identity || return 1
+    printf '%s %s\n' "$INSTALLER_PART" "$INSTALLER_DISK"
+}
+
 installer_mount() {
     local dest="${1:-$INSTALLER_MNT}"
     local already
@@ -258,6 +328,43 @@ installer_umount() {
         umount "$dest" 2>/dev/null || umount -l "$dest" 2>/dev/null || true
     fi
     return 0
+}
+
+# --- Log files written to the installer media ------------------------------
+# Logs go to <media root>/logs/<name>_<DDMONYYYY_HHMM>.<ext>, e.g.
+# installer-boot_08OCT2026_2300.log. The stamp is fixed the first time a given
+# log name is requested in this boot (kept under /run), so repeated flushes in
+# one boot update the same file while a later boot never overwrites it.
+: "${INSTALLER_LOG_STAMP_DIR:=/run/installer-log-stamps}"
+
+# 24-hour local time, upper-case month: 08OCT2026_2300.
+installer_log_timestamp() {
+    local ts
+    ts="$(LC_ALL=C date '+%d%b%Y_%H%M' 2>/dev/null)" || ts=""
+    [ -n "$ts" ] || ts="UNKNOWN-TIME"
+    printf '%s\n' "${ts^^}"
+}
+
+# Print the stamped file name for log $1 (e.g. installer-setup.log).
+installer_log_name() {
+    local name="$1" stamp_file stamp=""
+    stamp_file="${INSTALLER_LOG_STAMP_DIR}/${name}"
+    [ -s "$stamp_file" ] && stamp="$(cat "$stamp_file" 2>/dev/null)"
+    if [ -z "$stamp" ]; then
+        stamp="$(installer_log_timestamp)"
+        mkdir -p "$INSTALLER_LOG_STAMP_DIR" 2>/dev/null || true
+        printf '%s\n' "$stamp" > "$stamp_file" 2>/dev/null || true
+    fi
+    printf '%s_%s.%s\n' "${name%.*}" "$stamp" "${name##*.}"
+}
+
+# Make sure <media root>/logs exists (it sits at the root of the media, not in
+# boot/) and print the full destination path for log $2 under mount point $1.
+# Every writer calls this, so whichever runs first creates the directory.
+installer_log_dest() {
+    local root="$1" name="$2"
+    mkdir -p "${root}/logs" || return 1
+    printf '%s/logs/%s\n' "$root" "$(installer_log_name "$name")"
 }
 
 # True when $1 is a real, writable, non-zero disk that is not installer media.

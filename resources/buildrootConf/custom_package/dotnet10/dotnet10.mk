@@ -52,13 +52,14 @@ BR2_STRIP_EXCLUDE_DIRS += opt/dotnet10
 endif
 endif
 
-# $(@D) also holds Buildroot's .stamp_* files; leave them out.
+# $(@D) also holds Buildroot's .stamp_*, .applied_patches_list and
+# .files-list* files; CUSTOM_PACKAGE_TARGET_DIR_EXCLUDES (external.mk) keeps
+# them out of the rootfs.
 define DOTNET10_INSTALL_TARGET_CMDS
 	rm -rf $(TARGET_DIR)/opt/dotnet10
 	$(INSTALL) -d -m 0755 $(TARGET_DIR)/opt/dotnet10
-	cp -a $(@D)/. $(TARGET_DIR)/opt/dotnet10/
-	rm -f $(TARGET_DIR)/opt/dotnet10/.stamp_* \
-		$(TARGET_DIR)/opt/dotnet10/.applied_patches_list
+	rsync -aH $(CUSTOM_PACKAGE_TARGET_DIR_EXCLUDES) \
+		$(@D)/ $(TARGET_DIR)/opt/dotnet10/
 	$(INSTALL) -D -m 0644 $(DOTNET10_PKGDIR)/dotnet10.sh \
 		$(TARGET_DIR)/etc/profile.d/dotnet10.sh
 endef
