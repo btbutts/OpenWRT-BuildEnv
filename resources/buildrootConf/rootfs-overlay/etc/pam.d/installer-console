@@ -1,0 +1,16 @@
+#%PAM-1.0
+# PAM service of installer-wizard.service and console-getty.service
+# (PAMName=installer-console, User=root).
+#
+# It exists so that these units run inside a systemd-logind session on seat0 and
+# the VT: libseat (kmscon --libseat) needs that session to take the seat. It
+# ships with the image rather than with kmscon, so the getty fallback of those
+# same units never depends on the kmscon package being present.
+#
+# systemd runs the account and session stacks only; there is nothing to
+# authenticate (root, started by the service manager).
+account    required     pam_permit.so
+session    required     pam_permit.so
+# The leading dash ignores a missing pam_systemd.so: no session, no libseat,
+# and console-session.sh then uses kmscon on its own or getty.
+-session   optional     pam_systemd.so type=tty class=greeter

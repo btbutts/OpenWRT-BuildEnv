@@ -1,0 +1,96 @@
+config BR2_PACKAGE_KMSCON
+	bool "kmscon"
+	depends on BR2_USE_MMU # fork()
+	depends on BR2_TOOLCHAIN_HAS_THREADS # libdrm
+	depends on !BR2_STATIC_LIBS # dlopen() font/video modules, shared libtsm
+	depends on BR2_PACKAGE_HAS_LIBUDEV # libudev
+	select BR2_PACKAGE_FONTCONFIG
+	select BR2_PACKAGE_HOST_DOCBOOK_XSL if BR2_KEEP_MAN_PAGES_DOCS
+	select BR2_PACKAGE_KMSCON_LIBTSM
+	select BR2_PACKAGE_LIBDRM
+	select BR2_PACKAGE_LIBXKBCOMMON
+	select BR2_PACKAGE_ZLIB
+	help
+	  KMSCON is a system console terminal emulator for Linux based
+	  directly on Kernel Mode Setting (KMS). It replaces the standard
+	  kernel VT subsystem entirely in user-space, enabling advanced
+	  features like anti-aliased TrueType (TTF) font layouts, 256-color
+	  terminal emulation, and localized multi-head environments.
+
+	  KMSCON requires libudev, so you must set either eudev or
+	  systemd as your init system to satisfy this requirement.
+
+	  Optional features are enabled automatically when their
+	  dependencies are selected: dbus (BR2_PACKAGE_DBUS), libseat
+	  (BR2_PACKAGE_KMSCON_LIBSEAT or BR2_PACKAGE_SEATD) and the GPU
+	  renderers (a GBM, EGL and GLES provider such as mesa3d).
+
+	  https://github.com/kmscon/kmscon
+
+# libtsm is built by kmscon-libtsm.mk only for kmscon, as the package kmscon-libtsm.
+# This has no prompt: it is turned on by kmscon's select and never set by hand.
+# Buildroot derives a package's enable symbol from its name, so the package
+# name kmscon-libtsm is what makes this BR2_PACKAGE_KMSCON_LIBTSM.
+config BR2_PACKAGE_KMSCON_LIBTSM
+	bool
+
+if BR2_PACKAGE_KMSCON
+
+config BR2_PACKAGE_KMSCON_VERSION
+	string "KMSCON release (tag) version"
+	default "10.0.4"
+	help
+	  KMSCON release without the leading 'v', for example
+	  10.0.0. Leave this unset to use that default.
+
+	  See: https://github.com/kmscon/kmscon/releases
+	  for more information on release availability.
+
+config BR2_PACKAGE_KMSCON_LIBSEAT
+	bool "libseat (seat management)"
+	# Buildroot's seatd package already provides libseat
+	depends on !BR2_PACKAGE_SEATD
+	default y if BR2_PACKAGE_SYSTEMD_LOGIND
+	help
+	  Build libseat (from seatd's source, client library only) and
+	  let KMSCON use it to take its seat and open DRM and input
+	  devices without owning the VT. This allows running as a
+	  regular user.
+
+	  The backend is chosen from the Buildroot configuration:
+	  systemd-logind when BR2_PACKAGE_SYSTEMD_LOGIND is enabled,
+	  otherwise libseat's built-in backend (no seat daemon).
+	  No seatd daemon is built.
+
+	  Not needed when BR2_PACKAGE_SEATD is enabled: KMSCON then
+	  uses the libseat from that package.
+
+config BR2_PACKAGE_KMSCON_LIBSEAT_VERSION
+	string "libseat (seatd) release version"
+	depends on BR2_PACKAGE_KMSCON_LIBSEAT
+	default "0.9.3"
+	help
+	  seatd release tag whose libseat is built, for example
+	  0.9.3. Leave this unset to use that default.
+
+	  See: https://github.com/kennylevinsen/seatd/tags
+
+config BR2_PACKAGE_KMSCON_LIBTSM_VERSION
+	string "KMSCON libtsm dependency version"
+	default "4.8.0"
+	help
+	  Specify the version tag of the libtsm terminal emulator
+	  library without a leading 'v'. KMSCON 10.x requires
+	  libtsm >= 4.8.0.
+
+	  See: https://github.com/kmscon/libtsm/releases
+
+endif
+
+comment "kmscon needs a toolchain w/ threads, dynamic library"
+	depends on BR2_USE_MMU
+	depends on !BR2_TOOLCHAIN_HAS_THREADS || BR2_STATIC_LIBS
+
+comment "kmscon needs a libudev provider (systemd or eudev)"
+	depends on BR2_USE_MMU
+	depends on !BR2_PACKAGE_HAS_LIBUDEV

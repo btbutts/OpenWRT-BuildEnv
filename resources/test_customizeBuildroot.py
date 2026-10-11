@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import importlib.util
 import os
+import re
 import shutil
 import socket
 import socketserver
@@ -303,6 +305,7 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             "hexedit",
             "jaq",
             "pwsh7",
+            "python-freetype-py",
             "python-uv",
             "sharutils",
             "sudo-rs",
@@ -315,6 +318,40 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             )
             self.assertTrue((self.ROOT / name / "Config.in").is_file())
             self.assertTrue((self.ROOT / name / f"{name}.mk").is_file())
+
+    def test_python_freetype_py_has_target_and_host_options(self) -> None:
+        """Both variants have the Kconfig symbols Buildroot derives from the package name."""
+        cfg = (self.ROOT / "python-freetype-py" / "Config.in").read_text()
+        self.assertIn("config BR2_PACKAGE_PYTHON_FREETYPE_PY\n", cfg)
+        self.assertIn("config BR2_PACKAGE_HOST_PYTHON_FREETYPE_PY\n", cfg)
+        self.assertIn("select BR2_PACKAGE_FREETYPE", cfg)
+        self.assertIn("depends on BR2_PACKAGE_PYTHON3", cfg)
+        mk = (self.ROOT / "python-freetype-py" / "python-freetype-py.mk").read_text()
+        self.assertIn("$(eval $(python-package))", mk)
+        self.assertIn("$(eval $(host-python-package))", mk)
+        self.assertIn("PYTHON_FREETYPE_PY_SETUP_TYPE = pep517", mk)
+        self.assertIn(
+            "PYTHON_FREETYPE_PY_SITE = $(call github,rougier,freetype-py,"
+            "v$(PYTHON_FREETYPE_PY_VERSION))",
+            mk,
+        )
+        self.assertNotIn("PYTHON_FREETYPE_PY_SOURCE", mk)
+        self.assertNotIn("pythonhosted", mk)
+        # A GitHub tarball has no .git or PKG-INFO, so setuptools_scm needs the version.
+        self.assertIn(
+            "PYTHON_FREETYPE_PY_ENV = SETUPTOOLS_SCM_PRETEND_VERSION_FOR_FREETYPE_PY=", mk
+        )
+        self.assertIn("HOST_PYTHON_FREETYPE_PY_ENV = $(PYTHON_FREETYPE_PY_ENV)", mk)
+        hashes = (self.ROOT / "python-freetype-py" / "python-freetype-py.hash").read_text()
+        self.assertIn("python-freetype-py-2.5.1.tar.gz", hashes)
+        self.assertRegex(mk, r"(?m)^PYTHON_FREETYPE_PY_DEPENDENCIES = \\\n\tfreetype \\")
+        self.assertRegex(mk, r"(?m)^HOST_PYTHON_FREETYPE_PY_DEPENDENCIES = \\\n\thost-freetype \\")
+        for build_dep in (
+            "host-python-setuptools",
+            "host-python-setuptools-scm",
+            "host-python-wheel",
+        ):
+            self.assertEqual(mk.count(build_dep + " ") + mk.count(build_dep + "\n"), 2)
 
     def test_external_mk_includes_package_makefiles(self) -> None:
         """external.mk includes */*.mk; late install stays in custom-late.mk."""
@@ -441,7 +478,9 @@ class Br2ExternalLayoutTests(unittest.TestCase):
         self.assertNotIn("host-python3", mk)
         # Terminus comes from its own release, only when that face is on.
         self.assertIn("ifeq ($(BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_TERMINUS),y)", mk)
-        self.assertIn("DEBIAN_CONSOLE_FONTS_EXTRA_DOWNLOADS = https://downloads.sourceforge.net", mk)
+        self.assertIn(
+            "DEBIAN_CONSOLE_FONTS_EXTRA_DOWNLOADS = https://downloads.sourceforge.net", mk
+        )
         self.assertIn("'*/ter-u*.bdf'", mk)
         self.assertIn("-f $(DEBIAN_CONSOLE_FONTS_PKGDIR)/select.makefile", mk)
         self.assertIn("rsync -a --include='*.psf.gz' --exclude='*'", mk)
@@ -460,13 +499,13 @@ class Br2ExternalLayoutTests(unittest.TestCase):
 
     def test_debian_console_fonts_every_option_is_wired(self) -> None:
         """Every face and code set option in Config.in is used by the makefile."""
-        import re
-
-        text = (self.ROOT / "debian-console-fonts" / "Config.in").read_text(encoding="utf-8")
+        text =(self.ROOT / "debian-console-fonts" / "Config.in").read_text(encoding="utf-8")
         mk = (self.ROOT / "debian-console-fonts" / "debian-console-fonts.mk").read_text(
             encoding="utf-8"
         )
-        options = re.findall(r"^config (BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_\w+)$", text, re.M)
+        options = re.findall(
+            r"^config (BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_\w+)$", text, re.MULTILINE
+        )
         self.assertGreaterEqual(len(options), 20)
         for option in options:
             self.assertIn(option, mk, option)
@@ -513,7 +552,9 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             },
         )
         # VGA% must not pick up TerminusBoldVGA*, and FullGreek is its own code set.
-        self.assertEqual(selected("Uni2 Greek FullGreek", "VGA%"), {"Greek-VGA16", "FullGreek-VGA16"})
+        self.assertEqual(
+            selected("Uni2 Greek FullGreek", "VGA%"), {"Greek-VGA16", "FullGreek-VGA16"}
+        )
         self.assertEqual(selected("Uni2", "DejaVu%"), {"Uni2-DejaVu30x16"})
 
     def test_terminus_font_package(self) -> None:
@@ -593,8 +634,6 @@ class Br2ExternalLayoutTests(unittest.TestCase):
                 sorted(p.name for p in dst.iterdir()),
                 sorted(f"{new}.psf.gz" for new in built.values()),
             )
-            import gzip
-
             self.assertEqual(
                 gzip.decompress((dst / "Uni-TerminusBoldVGA16.psf.gz").read_bytes()),
                 b"font ter-v16v",
@@ -612,12 +651,18 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             src, dst = Path(tmp) / "src", Path(tmp) / "out"
             src.mkdir()
             empty = subprocess.run(
-                [sys.executable, str(script), str(src), str(dst)], capture_output=True, text=True
+                [sys.executable, str(script), str(src), str(dst)],
+                capture_output=True,
+                text=True,
+                check=False,
             )
             self.assertNotEqual(empty.returncode, 0)
             (src / "ter-z16n.psf").write_bytes(b"x")
             bad = subprocess.run(
-                [sys.executable, str(script), str(src), str(dst)], capture_output=True, text=True
+                [sys.executable, str(script), str(src), str(dst)],
+                capture_output=True,
+                text=True,
+                check=False,
             )
             self.assertNotEqual(bad.returncode, 0)
             self.assertIn("unknown charset 'z'", bad.stderr)
@@ -2288,8 +2333,8 @@ class FetchHashHelperTests(unittest.TestCase):
             text = (root / rel).read_text(encoding="utf-8")
             self.assertNotIn("fetch-hash-helper", text)
             self.assertNotIn("fetch_hash_helper", text)
-        fetch_hash = (root / "patches" / "fetch_hash.py").read_text(encoding="utf-8")
-        for line in fetch_hash.splitlines():
+        installer = (root / "patches" / "install_fetch_hash.py").read_text(encoding="utf-8")
+        for line in installer.splitlines():
             stripped = line.strip()
             if stripped.startswith(("import ", "from ")):
                 self.assertNotIn("fetch-hash-helper", stripped)

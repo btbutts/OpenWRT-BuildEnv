@@ -2,7 +2,7 @@
 # /root/show-fonts.sh
 #
 # Page through the console fonts under /usr/share/consolefonts (and its
-# subdirectories) on the tty1 virtual console. For each font: load it with
+# subdirectories) on a text virtual console. For each font: load it with
 # setfont, draw its glyph grid with showconsolefont, then print a sample of
 # letters, digits, punctuation and the box-drawing characters the installer
 # TUI uses.
@@ -17,12 +17,21 @@
 # first and put back on exit or Ctrl-C. If that copy cannot be made, the
 # kernel's boot default font is restored instead.
 #
+# Where it runs. These are kernel console fonts: setfont only works on a VT
+# that is in text mode. That is the case on a getty login, but not inside
+# kmscon (which draws the screen itself, in graphics mode, and whose terminal
+# is a pty), nor over ssh or a serial line. When the terminal this is started
+# from is not a text VT, the script opens one for itself with openvt, switches
+# to it, runs the preview there, and switches back to where it was when you
+# quit. Keys are then read from the keyboard attached to that VT, so type them
+# at the machine's own keyboard, not in the ssh session.
+#
 # Usage: show-fonts.sh [--partial]
 #   --partial   also list partialfonts/ (glyph subsets meant to be merged into
 #               a full font; on their own they render mostly blank)
-# TTY=/dev/tty2 show-fonts.sh   pick a different virtual console.
+# TTY=/dev/tty2 show-fonts.sh   preview on that VT; it is used as it is and no
+#                               spare VT is opened.
 
-TTY="${TTY:-/dev/tty1}"
 FONT_DIR="${FONT_DIR:-/usr/share/consolefonts}"
 
 find_args=(-type f -name '*.gz')
@@ -35,6 +44,29 @@ TOTAL=${#FONTS[@]}
 if [ "$TOTAL" -eq 0 ]; then
     echo "No fonts found under ${FONT_DIR}." >&2
     exit 1
+fi
+
+# Pick the console the font operations go to. A text VT (getty) is used as it
+# is. Anything else (kmscon's pty, ssh, a serial line) is re-run on a spare VT.
+if [ -z "${TTY:-}" ]; then
+    here="$(tty 2>/dev/null)" || here=""
+    dev_dir="${SHOW_FONTS_DEV_DIR:-/dev}"   # only the tests change this
+    if [[ "$here" =~ ^${dev_dir}/tty[0-9]+$ ]] || { [ -n "${SHOW_FONTS_ON_VT:-}" ] && [ -n "$here" ]; }; then
+        TTY="$here"
+    else
+        if ! command -v openvt > /dev/null 2>&1; then
+            {
+                echo "show-fonts.sh: this terminal (${here:-none}) is not a text console and"
+                echo "openvt is not installed to open one. Log in on a text VT (e.g. Alt+F2)"
+                echo "and run it there, or name a VT with TTY=/dev/ttyN."
+            } >&2
+            exit 1
+        fi
+        echo "Opening the font preview on a spare text console; it switches back here when you quit."
+        SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+        # TERM=linux: the new VT is the kernel console, not kmscon (TERM=kmscon).
+        exec openvt -s -w -- env TERM=linux SHOW_FONTS_ON_VT=1 "$SELF" "$@"
+    fi
 fi
 
 # Save the font (with its unicode map) and console map now in use.

@@ -2,6 +2,9 @@
 Description=OpenWRT installer wizard
 Documentation=file:///usr/bin/openwrt-install-wizard.sh
 After=installer-bootlog.service dev-tty1.device systemd-udevd.service
+# console-session.sh waits for the display driver udev loads at coldplug, and
+# pam_systemd (PAMName below) talks to logind.
+After=systemd-udev-trigger.service systemd-logind.service
 Wants=installer-bootlog.service
 # Maintenance GRUB entry: installer.mode=shell — skip wizard, leave tty1 to getty.
 ConditionKernelCommandLine=!installer.mode=shell
@@ -23,10 +26,19 @@ RemainAfterExit=no
 # (or forced with installer.ui=bash). Both exit 0 on cancel.
 # dialog Cancel is 1; treat that as a normal end so the unit is not FAILED.
 SuccessExitStatus=0 1
+# Used on the getty path; kmscon sets TERM=kmscon (and COLORTERM) for its child.
 Environment=TERM=linux
 # Boot shows the usual systemd/kernel output; silence both before the TUI draws.
 ExecStartPre=-/usr/lib/installer/quiet-console.sh
-ExecStart=/usr/bin/openwrt-install-wizard.sh
+# console-session.sh runs the launcher above inside kmscon when a real display
+# driver has a connected output, and directly on tty1 (as before) otherwise or
+# when kmscon fails. It is the only thing that ever starts the wizard, so the
+# wizard cannot start on the VT first and then block kmscon.
+ExecStart=/usr/lib/installer/console-session.sh wizard
+# A logind session on seat0 / tty1 for kmscon --libseat (see
+# /etc/pam.d/installer-console). User= is what makes PAMName= take effect.
+User=root
+PAMName=installer-console
 StandardInput=tty
 StandardOutput=tty
 StandardError=tty

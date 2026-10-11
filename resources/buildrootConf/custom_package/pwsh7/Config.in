@@ -38,9 +38,6 @@ config BR2_PACKAGE_PWSH7_VERSION
 	  PowerShell release without the leading v, for example
 	  7.6.6. Leave this unset to use that default.
 
-	  If pwsh7.hash does not yet list that tarball, its sha256
-	  is appended at download time.
-
 endif
 
 comment "pwsh7 needs an x86-64/aarch64 glibc Buildroot toolchain with C++, threads, wchar and dynamic libs"

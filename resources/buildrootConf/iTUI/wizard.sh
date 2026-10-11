@@ -1,12 +1,16 @@
 #!/bin/bash
 set -e
 
-echo "installer shell=$0 bash=${BASH_VERSION:-NOT_BASH} exe=$(readlink -f /proc/self/exe)" > /dev/tty1
+# Never address /dev/tty1 here: this runs on tty1 under getty, but inside a
+# kmscon pty when kmscon hosts the wizard (console-session.sh), where tty1 is
+# the hidden, graphics-mode VT. stderr and /dev/tty (the controlling terminal)
+# are the terminal in both cases.
+echo "installer shell=$0 bash=${BASH_VERSION:-NOT_BASH} exe=$(readlink -f /proc/self/exe)" >&2
 
-# dialog Cancel=1, ESC=255. Those are a normal end: hand tty1 back to getty.
+# dialog Cancel=1, ESC=255. Those are a normal end: hand the console back.
 user_quit() {
     clear
-    stty sane < /dev/tty1 > /dev/tty1 2>/dev/null || stty sane 2>/dev/null || true
+    stty sane < /dev/tty 2>/dev/null || stty sane 2>/dev/null || true
     exit 0
 }
 

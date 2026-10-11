@@ -437,7 +437,9 @@ if dialog --yesno "Confirm YES to reboot the system immediately, or NO to launch
 else
     echo "--> Returning to a root login prompt on the kernel console..."
     clear
-    stty sane < /dev/tty1 > /dev/tty1 2>/dev/null || stty sane 2>/dev/null || true
+    # The controlling terminal, not /dev/tty1: under kmscon this runs in a pty
+    # and tty1 is the hidden graphics-mode VT.
+    stty sane < /dev/tty 2>/dev/null || stty sane 2>/dev/null || true
     # installer-wizard.service OnSuccess starts console-getty.service.
     exit 0
 fi

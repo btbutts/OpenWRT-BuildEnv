@@ -3,11 +3,18 @@
 # GNU tools in /usr/bin (vim, less) ahead of BusyBox applets in /bin.
 export PATH=/usr/bin:/usr/sbin:/bin:/sbin
 
-# Prompt is per-shell (see /etc/prompt.sh). Login bash sets PS1 here;
-# zsh sets PROMPT in /etc/zshrc; /root/.bashrc covers `bash` from zsh.
-if [ -n "${BASH_VERSION:-}" ] && [ -r /etc/prompt.sh ]; then
-    # shellcheck source=/etc/prompt.sh disable=1091
-    . /etc/prompt.sh
+# Prompt and shell functions are per-shell (see /etc/prompt.sh, /etc/shared-shell.sh).
+# Login bash loads them here; zsh loads them in /etc/zshrc; /root/.bashrc
+# covers non-login `bash` started from zsh.
+if [ -n "${BASH_VERSION:-}" ]; then
+    if [ -r /etc/prompt.sh ]; then
+        # shellcheck source=/etc/prompt.sh disable=1091
+        . /etc/prompt.sh
+    fi
+    if [ -r /etc/shared-shell.sh ]; then
+        # shellcheck source=/etc/shared-shell.sh disable=1091
+        . /etc/shared-shell.sh
+    fi
 fi
 
 export HOME="${HOME:-/root}"

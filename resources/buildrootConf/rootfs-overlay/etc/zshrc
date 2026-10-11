@@ -6,3 +6,7 @@ if [ -r /etc/prompt.sh ]; then
     # shellcheck source=/etc/prompt.sh
     . /etc/prompt.sh
 fi
+if [ -r /etc/shared-shell.sh ]; then
+    # shellcheck source=/etc/shared-shell.sh
+    . /etc/shared-shell.sh
+fi

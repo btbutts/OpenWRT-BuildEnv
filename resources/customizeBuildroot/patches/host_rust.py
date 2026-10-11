@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 from ..util import write_if_changed
-from .fetch_hash import write_fetch_hash_mk
+from .install_fetch_hash import write_fetch_hash_mk
 
 # Env vars are the only version source. No fallbacks; blank means skip.
 RUST_VERSION_ENV = "RUST_VERSION"

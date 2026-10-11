@@ -45,8 +45,8 @@ from customizeBuildroot.patches.espflash import (
     patch_espflash_config_in,
     patch_espflash_mk,
 )
-from customizeBuildroot.patches.fetch_hash import write_fetch_hash_mk
 from customizeBuildroot.patches.host_rust import update_rust_version
+from customizeBuildroot.patches.install_fetch_hash import write_fetch_hash_mk
 from customizeBuildroot.patches.kernel_support import update_kernel_support
 from customizeBuildroot.patches.linux_pam import (
     patch_linux_pam_config_in,

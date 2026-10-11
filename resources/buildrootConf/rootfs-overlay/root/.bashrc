@@ -1,7 +1,11 @@
-# Interactive non-login bash (e.g. `bash` from zsh). Login bash uses /etc/profile.
-# shellcheck disable=SC1091,SC2148
-alias vi=vim
+#!/bin/bash
+# Interactive non-login bash (for example `bash` from the root zsh login).
+# Login bash already sourced these from /etc/profile.
 if [ -r /etc/prompt.sh ]; then
-    # shellcheck source=/etc/prompt.sh
+    # shellcheck source=/etc/prompt.sh disable=1091
     . /etc/prompt.sh
+fi
+if [ -r /etc/shared-shell.sh ]; then
+    # shellcheck source=/etc/shared-shell.sh disable=1091
+    . /etc/shared-shell.sh
 fi

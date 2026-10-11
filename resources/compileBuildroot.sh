@@ -269,6 +269,7 @@ prepare_overlay() {
         ["${BUILDROOT_OVERLAY_DIR}/usr/lib/openwrt-installer/generate-motd.sh"]=""
         ["${BUILDROOT_OVERLAY_DIR}/root/show-fonts.sh"]=""
         ["${BUILDROOT_OVERLAY_DIR}/usr/lib/installer/quiet-console.sh"]=""
+        ["${BUILDROOT_OVERLAY_DIR}/etc/shared-shell.sh"]=""
         ["${BUILDROOT_CONF_DIR%/}/post_build_script/append.sh"]=""
         ["${BUILDROOT_CONF_DIR%/}/post_build_script/set_os_release.sh"]=""
     )
@@ -278,9 +279,11 @@ prepare_overlay() {
     for sourced in \
         "${BUILDROOT_OVERLAY_DIR}/etc/profile" \
         "${BUILDROOT_OVERLAY_DIR}/etc/prompt.sh" \
+        "${BUILDROOT_OVERLAY_DIR}/etc/shared-shell.sh" \
         "${BUILDROOT_OVERLAY_DIR}/etc/zprofile" \
         "${BUILDROOT_OVERLAY_DIR}/etc/zshenv" \
-        "${BUILDROOT_OVERLAY_DIR}/etc/zshrc"
+        "${BUILDROOT_OVERLAY_DIR}/etc/zshrc" \
+        "${BUILDROOT_OVERLAY_DIR}/root/.bashrc"
     do
         if [ -f "$sourced" ]; then
             chmod 644 "$sourced"

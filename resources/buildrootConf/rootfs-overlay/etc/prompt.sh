@@ -1,4 +1,5 @@
-# Sourced by /etc/profile (login bash) and /etc/zshrc (interactive zsh).
+# Sourced by /etc/profile (login bash), /etc/zshrc (interactive zsh),
+# and /root/.bashrc (non-login interactive bash).
 # Do not execute. Do not export PS1: zsh %F/%n/%m is not valid in bash.
 #
 # 256-color index 33 is #0087ff (xterm cube). Classic 16-color SGR 33

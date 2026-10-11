@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 from ..util import tabbed, write_if_changed
-from .fetch_hash import write_fetch_hash_mk
+from .install_fetch_hash import write_fetch_hash_mk
 
 # 2026.08 latest kernel/headers stop at 7.1.13. --update-kernel-support
 # promotes 7.2.9 the same way Buildroot itself bumps a latest series.
