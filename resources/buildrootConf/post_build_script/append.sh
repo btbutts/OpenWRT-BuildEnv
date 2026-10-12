@@ -42,3 +42,21 @@ rm -f "${TARGET}/etc/nologin" "${TARGET}/etc/securetty"
 if [ -f "${SHELLS}" ] && ! grep -qx "${ROOT_SHELL}" "${SHELLS}"; then
     printf '%s\n' "${ROOT_SHELL}" >> "${SHELLS}"
 fi
+
+# Compose tables for kmscon. libxkbcommon (kmscon's keyboard) reads them from
+# /usr/share/X11/locale: compose.dir says which file serves the locale (C.UTF-8 and
+# en_US.UTF-8 both get en_US.UTF-8/Compose, a single file with no includes). Without
+# them kmscon logs "couldn't find a Compose file" and has no dead keys. The tables are
+# those libX11 built for the host; kmscon.mk makes sure it is built before this runs.
+X11_LOCALE_SRC="${HOST_DIR:-}/share/X11/locale"
+X11_LOCALE_DST="${TARGET}/usr/share/X11/locale"
+if [ -r "${X11_LOCALE_SRC}/compose.dir" ] && [ -r "${X11_LOCALE_SRC}/en_US.UTF-8/Compose" ]; then
+    install -d "${X11_LOCALE_DST}/en_US.UTF-8"
+    install -m 0644 "${X11_LOCALE_SRC}/compose.dir" "${X11_LOCALE_DST}/compose.dir"
+    install -m 0644 "${X11_LOCALE_SRC}/en_US.UTF-8/Compose" "${X11_LOCALE_DST}/en_US.UTF-8/Compose"
+    if [ -r "${X11_LOCALE_SRC}/locale.alias" ]; then
+        install -m 0644 "${X11_LOCALE_SRC}/locale.alias" "${X11_LOCALE_DST}/locale.alias"
+    fi
+else
+    echo "append.sh: no X11 compose tables in ${X11_LOCALE_SRC}; kmscon will have no compose keys" >&2
+fi

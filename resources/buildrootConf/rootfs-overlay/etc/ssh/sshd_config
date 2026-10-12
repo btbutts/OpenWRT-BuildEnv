@@ -1,0 +1,18 @@
+# sshd_config of the installer image. Replaces the one the openssh package installs
+# (which is otherwise the same: key file, PAM, sftp).
+#
+# This is a temporary installer environment on a USB stick: root has no password and
+# may log in over ssh without one, so that the shell is easy to reach for troubleshooting
+# (ssh root@<address>; there is nothing to type at the password prompt, or none).
+# Do not copy these settings to a system that stays up.
+
+AuthorizedKeysFile	.ssh/authorized_keys
+UsePAM yes
+Subsystem	sftp	/usr/libexec/sftp-server
+
+# The default (prohibit-password) would refuse root without a key.
+PermitRootLogin yes
+# Accept the empty password of root. PAM decides (see /etc/pam.d/sshd, "nullok").
+PermitEmptyPasswords yes
+# pam_motd (/etc/pam.d/sshd) prints the message of the day; do not print /etc/motd too.
+PrintMotd no

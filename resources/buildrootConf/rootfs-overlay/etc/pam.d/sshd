@@ -1,0 +1,13 @@
+#%PAM-1.0
+# PAM stack of sshd in the installer image. Same as the openssh package's, plus:
+#   * nullok: root has no password and may log in without one (see sshd_config)
+#   * the same dynamic message of the day as a console login, with the line that says
+#     who owns the console
+auth       required     pam_unix.so shadow nodelay nullok
+account    required     pam_nologin.so
+account    required     pam_unix.so
+password   required     pam_unix.so shadow nullok use_authtok
+session    required     pam_unix.so
+session    required     pam_limits.so
+session    optional     pam_exec.so quiet type=open_session /usr/lib/openwrt-installer/generate-motd.sh
+session    optional     pam_motd.so motd=/run/motd.dynamic

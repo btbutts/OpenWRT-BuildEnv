@@ -756,6 +756,86 @@ class Br2ExternalLayoutTests(unittest.TestCase):
         self.assertIn('BR2_SYSTEM_BIN_SH="bash"', setup)
 
 
+class InstallerOverlayTests(unittest.TestCase):
+    """Files of the rootfs overlay that decide how the installer's console behaves.
+
+    These run on the machine that builds the image, never in the image.
+    """
+
+    CONF = Path(__file__).resolve().parent / "buildrootConf"
+    OVERLAY = CONF / "rootfs-overlay"
+
+    def test_kmscons_own_units_stay_disabled(self) -> None:
+        """A preset read before Buildroot's keeps kmscon.service and kmsconvt@ off.
+
+        Both were enabled by preset-all and put a login prompt on tty1 in front of the
+        installer. The file name has to sort before 90-systemd.preset: the first match wins.
+        """
+        preset = self.OVERLAY / "usr/lib/systemd/system-preset/00-installer.preset"
+        lines = [
+            line.strip()
+            for line in preset.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        self.assertIn("disable kmscon.service", lines)
+        self.assertIn("disable kmsconvt@.service", lines)
+        self.assertNotIn("enable kmscon.service", lines)
+        self.assertLess(preset.name, "90-systemd.preset")
+
+    def test_kmscon_conf_keeps_ctrl_alt_del(self) -> None:
+        """kmscon puts the VT in K_OFF mode, so it has to forward Ctrl+Alt+Del itself."""
+        conf = (self.OVERLAY / "etc/kmscon/kmscon.conf").read_text(encoding="utf-8")
+        active = [ln.strip() for ln in conf.splitlines() if ln.strip() and ln[0] != "#"]
+        self.assertIn("grab-reboot=<Ctrl><Alt>Delete", active)
+        self.assertIn("gpus=all", active)
+
+    def test_compose_tables_reach_the_target(self) -> None:
+        """libxkbcommon needs /usr/share/X11/locale, so kmscon depends on the tables' package."""
+        script = (self.CONF / "post_build_script/append.sh").read_text(encoding="utf-8")
+        self.assertIn("usr/share/X11/locale", script)
+        self.assertIn("en_US.UTF-8/Compose", script)
+        mk = (self.CONF / "custom_package/kmscon/kmscon.mk").read_text(encoding="utf-8")
+        self.assertIn("host-xlib_libX11", mk)
+
+    def _login(self, script: Path, state: Path, env: dict[str, str]) -> list[str]:
+        """Run the message-of-the-day generator as one login; return its output lines."""
+        full = {**os.environ, "TERM": "kmscon", **env}
+        subprocess.run(["bash", str(script)], env=full, check=True, capture_output=True)
+        return state.with_name("motd").read_text(encoding="utf-8").splitlines()
+
+    @unittest.skipUnless(shutil.which("bash"), "bash not installed")
+    def test_motd_names_the_owner_and_the_previous_login(self) -> None:
+        """Console, then ssh, then console: each login names how the one before came in."""
+        source = self.OVERLAY / "usr/lib/openwrt-installer/generate-motd.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp)
+            script = run / "generate-motd.sh"
+            text = source.read_text(encoding="utf-8").replace("/run/", f"{run}/")
+            script.write_text(text.replace("motd.dynamic", "motd"), encoding="utf-8")
+            state = run / "installer-lastlogin"
+            console = {"PAM_SERVICE": "login", "PAM_TTY": "/dev/tty1"}
+            ssh = {"PAM_SERVICE": "sshd", "PAM_RHOST": "192.168.98.229", "PAM_TTY": "/dev/pts/2"}
+
+            first = self._login(script, state, console)
+            self.assertTrue(any(line.startswith("Console owner: KMSCON") for line in first))
+            self.assertFalse(any(line.startswith("Last login") for line in first))
+
+            second = self._login(script, state, ssh)
+            last = [line for line in second if line.startswith("Last login")]
+            self.assertEqual(len(last), 1)
+            self.assertIn("on the console (tty1)", last[0])
+
+            third = self._login(script, state, console)
+            last = [line for line in third if line.startswith("Last login")]
+            self.assertEqual(len(last), 1)
+            self.assertIn("over SSH from 192.168.98.229 (pts/2)", last[0])
+            # The owner line comes before the last login line, at the end of the message.
+            self.assertLess(
+                next(i for i, ln in enumerate(third) if ln.startswith("Console owner")),
+                next(i for i, ln in enumerate(third) if ln.startswith("Last login")),
+            )
+
+
 class PatchLinuxToolsTests(unittest.TestCase):
     """linux-tools mk.in fragments: pci_endpoint path and grep-install guards."""
 

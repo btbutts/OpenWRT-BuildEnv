@@ -1,0 +1,10 @@
+# Presets of the installer image, read before Buildroot's and systemd's own (the first
+# line that matches a unit wins).
+#
+# kmscon ships its own units: kmscon.service (a login prompt on a spare VT) and
+# kmsconvt@.service (a login prompt on tty1, instead of getty). Buildroot's preset-all
+# enabled both, so a "login:" prompt came up on tty1 before the installer. Console
+# ownership is the job of /usr/lib/installer/console-session.sh, started by
+# installer-wizard.service and console-getty.service; these two must stay off.
+disable kmscon.service
+disable kmsconvt@.service

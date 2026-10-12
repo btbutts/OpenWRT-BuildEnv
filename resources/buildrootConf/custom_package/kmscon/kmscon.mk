@@ -21,8 +21,12 @@ KMSCON_LICENSE_FILES = COPYING
 # libdrm is selected in Config.in; it backs video_drm2d.
 # host-ncurses supplies `tic`, which build_terminfo.py runs at install time to
 # put the "kmscon" terminfo entry on the target (TERM=kmscon needs it).
+# host-xlib_libX11 is built so that its compose tables ($(HOST_DIR)/share/X11/locale) exist:
+# post_build_script/append.sh copies the English one to the target, where libxkbcommon
+# looks for it (dead keys and compose sequences in the console).
 KMSCON_DEPENDENCIES = \
 	host-ncurses \
+	host-xlib_libX11 \
 	host-zlib \
 	kmscon-libtsm \
 	libdrm \
