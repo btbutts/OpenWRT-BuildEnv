@@ -1,0 +1,20 @@
+config BR2_PACKAGE_HIGH_RES_FONT_PACK
+	bool "high-res-font-pack"
+	help
+	  Four fixed-width TrueType/OpenType fonts for the kmscon
+	  console, installed as plain files, one directory each, under
+	  /usr/share/fonts: SourceCodePro, Inconsolata (Nerd Font Mono),
+	  FiraMono (Nerd Font Mono) and JetBrains (JetBrains Mono).
+	  Only the upright Regular and Bold faces are kept.
+
+	  Nothing is compiled. The archives are Buildroot extra
+	  downloads, unpacked in the package's build directory and
+	  copied to the target without the faces that are not used.
+
+	  The fonts are only used by kmscon's FreeType renderer, so
+	  BR2_PACKAGE_KMSCON, BR2_PACKAGE_FREETYPE and
+	  BR2_PACKAGE_FONTCONFIG have to be enabled for them to show.
+	  The order in which they are tried is set by font-name in
+	  /etc/kmscon/kmscon.conf.
+
+	  All four are licensed under the SIL OFL 1.1.

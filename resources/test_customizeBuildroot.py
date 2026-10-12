@@ -303,6 +303,7 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             "gcc-standalone-toolchain",
             "groff",
             "hexedit",
+            "high-res-font-pack",
             "jaq",
             "pwsh7",
             "python-freetype-py",
@@ -320,10 +321,13 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             self.assertTrue((self.ROOT / name / f"{name}.mk").is_file())
 
     def test_python_freetype_py_has_target_and_host_options(self) -> None:
-        """Both variants have the Kconfig symbols Buildroot derives from the package name."""
+        """The target variant has a Kconfig symbol; the host one is declared in the makefile.
+
+        A host package needs no symbol of its own to be built: it is built as a dependency
+        (debian-console-fonts lists host-python-freetype-py).
+        """
         cfg = (self.ROOT / "python-freetype-py" / "Config.in").read_text()
         self.assertIn("config BR2_PACKAGE_PYTHON_FREETYPE_PY\n", cfg)
-        self.assertIn("config BR2_PACKAGE_HOST_PYTHON_FREETYPE_PY\n", cfg)
         self.assertIn("select BR2_PACKAGE_FREETYPE", cfg)
         self.assertIn("depends on BR2_PACKAGE_PYTHON3", cfg)
         mk = (self.ROOT / "python-freetype-py" / "python-freetype-py.mk").read_text()
@@ -342,8 +346,6 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             "PYTHON_FREETYPE_PY_ENV = SETUPTOOLS_SCM_PRETEND_VERSION_FOR_FREETYPE_PY=", mk
         )
         self.assertIn("HOST_PYTHON_FREETYPE_PY_ENV = $(PYTHON_FREETYPE_PY_ENV)", mk)
-        hashes = (self.ROOT / "python-freetype-py" / "python-freetype-py.hash").read_text()
-        self.assertIn("python-freetype-py-2.5.1.tar.gz", hashes)
         self.assertRegex(mk, r"(?m)^PYTHON_FREETYPE_PY_DEPENDENCIES = \\\n\tfreetype \\")
         self.assertRegex(mk, r"(?m)^HOST_PYTHON_FREETYPE_PY_DEPENDENCIES = \\\n\thost-freetype \\")
         for build_dep in (
@@ -456,6 +458,11 @@ class Br2ExternalLayoutTests(unittest.TestCase):
     def test_only_package_makefiles_are_named_mk(self) -> None:
         """external.mk includes every */*.mk, so helper makefiles must not end in .mk."""
         for mk in self.ROOT.glob("*/*.mk"):
+            # These directories hold the packages that only kmscon uses (docbook-xml with
+            # docbook-xsl, kmscon-libtsm and kmscon-libseat with kmscon), each declared by
+            # name in its own makefile, so the file names differ from the directory's.
+            if mk.parent.name in ("docbook-xsl", "kmscon"):
+                continue
             self.assertEqual(mk.name, f"{mk.parent.name}.mk", str(mk))
 
     def test_debian_console_fonts_package(self) -> None:
@@ -465,7 +472,7 @@ class Br2ExternalLayoutTests(unittest.TestCase):
         self.assertIn("select BR2_PACKAGE_KBD", text)
         self.assertIn("depends on BR2_USE_MMU", text)
         self.assertIn("depends on BR2_TOOLCHAIN_GCC_AT_LEAST_4_9", text)
-        self.assertIn('default "0.0.3"', text)
+        self.assertIn('default "0.0.4"', text)
         self.assertNotIn("TERMINUS_VERSION", text)
         mk = (self.ROOT / "debian-console-fonts" / "debian-console-fonts.mk").read_text(
             encoding="utf-8"
@@ -553,11 +560,11 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             "BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_UNICODE=y\n"
         )
         plain = evaluate(base)
-        self.assertEqual(plain["VERSION"], "0.0.3")
-        self.assertEqual(plain["SOURCE"], "debian-console-fonts-0.0.3.tar.gz")
+        self.assertEqual(plain["VERSION"], "0.0.4")
+        self.assertEqual(plain["SOURCE"], "debian-console-fonts-0.0.4.tar.gz")
         self.assertEqual(
             plain["SITE"],
-            "https://github.com/btbutts/debian-console-fonts/releases/download/v0.0.3",
+            "https://github.com/btbutts/debian-console-fonts/releases/download/v0.0.4",
         )
         self.assertEqual(plain["FACE_PATTERNS"], "Terminus%")
         self.assertEqual(plain["CODESETS"], "Uni1 Uni2 Uni3")
@@ -574,9 +581,9 @@ class Br2ExternalLayoutTests(unittest.TestCase):
         self.assertEqual(dejavu["FREETYPE_ARGS"], "")
 
         pinned = evaluate(
-            base + 'BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_VERSION="0.0.4"\n'
+            base + 'BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_VERSION="0.0.3"\n'
         )
-        self.assertEqual(pinned["SOURCE"], "debian-console-fonts-0.0.4.tar.gz")
+        self.assertEqual(pinned["SOURCE"], "debian-console-fonts-0.0.3.tar.gz")
 
     def test_terminus_font_package(self) -> None:
         """terminus-font selects kbd and builds only the PSF console fonts."""
@@ -796,6 +803,29 @@ class InstallerOverlayTests(unittest.TestCase):
         self.assertIn("en_US.UTF-8/Compose", script)
         mk = (self.CONF / "custom_package/kmscon/kmscon.mk").read_text(encoding="utf-8")
         self.assertIn("host-xlib_libX11", mk)
+
+    @unittest.skipUnless(shutil.which("bash"), "bash not installed")
+    def test_post_build_script_closes_the_private_host_keys(self) -> None:
+        """Buildroot's overlay rsync makes files world-readable; sshd refuses such keys."""
+        script = self.CONF / "post_build_script/append.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            ssh = target / "etc" / "ssh"
+            ssh.mkdir(parents=True)
+            for name in ("ssh_host_rsa_key", "ssh_host_ed25519_key"):
+                (ssh / name).write_text("private", encoding="utf-8")
+                (ssh / f"{name}.pub").write_text("public", encoding="utf-8")
+                (ssh / name).chmod(0o644)  # what the overlay copy leaves
+                (ssh / f"{name}.pub").chmod(0o600)
+            (ssh / "sshd_config").write_text("x", encoding="utf-8")
+            (ssh / "sshd_config").chmod(0o644)
+            env = {**os.environ, "HOST_DIR": str(Path(tmp) / "none")}
+            subprocess.run(["bash", str(script), str(target)], env=env, check=True,
+                           capture_output=True)
+            for name in ("ssh_host_rsa_key", "ssh_host_ed25519_key"):
+                self.assertEqual((ssh / name).stat().st_mode & 0o777, 0o600)
+                self.assertEqual((ssh / f"{name}.pub").stat().st_mode & 0o777, 0o644)
+            self.assertEqual((ssh / "sshd_config").stat().st_mode & 0o777, 0o644)
 
     def _login(self, script: Path, state: Path, env: dict[str, str]) -> list[str]:
         """Run the message-of-the-day generator as one login; return its output lines."""

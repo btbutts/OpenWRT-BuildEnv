@@ -12,6 +12,9 @@
 
 CMDLINE_FILE="${INSTALLER_CMDLINE_FILE:-/proc/cmdline}"
 STAMP="${INSTALLER_SHELL_STAMP:-/run/installer-shell.started}"
+# Written by set_kmscon_font (/etc/shared-shell.sh) just before it ends the shell: the shell
+# was left on purpose to get a new kmscon (another font), not to go back to the wizard.
+RELOAD_STAMP="${INSTALLER_SHELL_RELOAD:-/run/installer-shell.reload}"
 MIN_LIFETIME=3
 WIZARD_UNIT=installer-wizard.service
 GETTY_UNIT=console-getty.service
@@ -54,6 +57,12 @@ start_getty() {
     systemctl start --no-block "$GETTY_UNIT"
     exit 0
 }
+
+# set_kmscon_font asked for the shell console to start over, with the font it configured.
+if [ -e "$RELOAD_STAMP" ]; then
+    rm -f "$RELOAD_STAMP"
+    start_getty "console restart requested by set_kmscon_font"
+fi
 
 # Maintenance entries never run the wizard: keep today's behaviour.
 if cmdline_has installer.mode=shell; then

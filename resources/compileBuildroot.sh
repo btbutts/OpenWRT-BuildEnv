@@ -1,4 +1,17 @@
 #!/bin/bash
+# This script is written for bash (associative arrays, ${!array[@]}, [[ ]] patterns) and a
+# shebang makes ./compileBuildroot.sh use bash whatever shell it is typed in. When zsh is
+# asked to run it as a program (zsh compileBuildroot.sh), hand it over to bash. Sourced into
+# zsh it would run the exit commands of the script in the user's shell, so refuse.
+if [ -n "${ZSH_VERSION:-}" ]; then
+    case "${ZSH_EVAL_CONTEXT:-}" in
+        *:file*)
+            echo "compileBuildroot.sh must be run, not sourced: ./compileBuildroot.sh" >&2
+            return 1
+            ;;
+    esac
+    exec bash "${ZSH_ARGZERO:-$0}" "$@"
+fi
 set -e
 
 : "${BUILDER_ROOT_DIR:=/builder}"
@@ -6,6 +19,7 @@ set -e
 : "${BUILDROOT_OUTPUT_DIR:=/builder/workspace/output/buildroot}"
 : "${BUILDROOT_CONF_DIR:=/builder/buildrootConf}"
 : "${WORKSPACE_DIR:=/builder/workspace}"
+: "${BR_RELEASE_NAME:=OpenWRT-Installer}"
 # br2-external tree. Make variable, not Kconfig. First make writes
 # output/.br2-external.mk; still export so a wiped tree's first
 # installer_defconfig sees custom packages.
@@ -13,12 +27,15 @@ set -e
 export BR2_EXTERNAL
 
 BUILDROOT_OVERLAY_DIR="${BUILDROOT_CONF_DIR%/}/rootfs-overlay"
+# sshd host keys of the installer image. Generated here, never shipped with the project, and
+# kept between builds so the image keeps the same identity (no known_hosts churn).
+BUILDROOT_SSH_KEYS_DIR="${WORKSPACE_DIR%/}/.ssh_keys_${BR_RELEASE_NAME}"
 BUILDROOT_CCACHE_DIR="${BUILDROOT_BUILDER_DIR%/}/.buildroot-ccache"
 BUILDROOT_OUTPUT_DIR="${BUILDROOT_OUTPUT_DIR%/}"
 
 # Define Usage Functions
 _usage() {
-    printf '%s\n%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n' \
+    printf '%s\n%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n\t%s\n' \
         "Usage: $0 [options]" \
         "Options:" \
         "--rebuild-linux-firmware          Rebuild the Linux firmware." \
@@ -30,6 +47,8 @@ _usage() {
         "--target-finalize-clean           Clean the target finalize directory." \
         "--resume                          Resume the previous build." \
         "--set-mirrors <mirror_assignment> Set mirror assignment(s)." \
+        "--generate-sshd-keys [--force]    Create the sshd host keys that are missing (all of them" \
+        "                                  with --force) and exit. A build does this by itself." \
         "--help, -h                        Show this help message."
 }
 # --set-mirrors usage
@@ -60,6 +79,19 @@ while [ $# -gt 0 ]; do
         --copy-only) COPY_ONLY=1; shift ;;
         --target-finalize-clean) RM_TARGET_FINALIZE=1; shift ;;
         --resume) RESUME=1; shift ;;
+        --generate-sshd-keys)
+            GENERATE_SSHD_KEYS=1
+            shift
+            # --force is only accepted right after --generate-sshd-keys.
+            if [ "${1:-}" = "--force" ]; then
+                FORCE_SSHD_KEYS=1
+                shift
+            fi
+            ;;
+        --force)
+            echo "Error: --force must immediately follow --generate-sshd-keys." >&2
+            exit 2
+            ;;
         --set-mirrors|--set-mirrors=*)
             active_arg="$1"
             args="$*"
@@ -206,7 +238,102 @@ run_move_images() {
         "${BUILDROOT_OUTPUT_DIR%/}"/initramfs-installer.img
 }
 
+# ---- sshd host keys --------------------------------------------------------
+# The image's sshd.service runs `ssh-keygen -A` before sshd starts, which only creates the
+# key types that are missing. Keys placed in the overlay are therefore kept, and the image
+# generates only what we did not supply. The keys live in $BUILDROOT_SSH_KEYS_DIR (outside
+# the container's own filesystem, so they survive a rebuilt container) and reach the overlay
+# through SCRIPTS_MAP in prepare_overlay.
+SSHD_KEY_TYPES=(rsa ecdsa ed25519 mldsa44-ed25519)
+SSHD_MISSING_KEY_TYPES=()
+
+# check_for_missing_sshd_keys: look in $BUILDROOT_SSH_KEYS_DIR for the public (*.pub) and
+# private file of every key type (ssh_host_<type>_key, "-" written "_"). Prints one line per
+# type, fills SSHD_MISSING_KEY_TYPES with the types that are not there, and returns 0 only
+# when none is missing.
+check_for_missing_sshd_keys() {
+    local type file
+    SSHD_MISSING_KEY_TYPES=()
+    printf '%s\n' "--> Checking sshd host keys in ${BUILDROOT_SSH_KEYS_DIR}:"
+    for type in "${SSHD_KEY_TYPES[@]}"; do
+        file="${BUILDROOT_SSH_KEYS_DIR}/ssh_host_${type//-/_}_key"
+        if [ -s "$file" ] && [ -s "${file}.pub" ]; then
+            printf '\t%-18s present\n' "$type"
+        else
+            printf '\t%-18s missing\n' "$type"
+            SSHD_MISSING_KEY_TYPES+=("$type")
+        fi
+    done
+    [ ${#SSHD_MISSING_KEY_TYPES[@]} -eq 0 ]
+}
+
+# generate_sshd_keys: create the key types that check_for_missing_sshd_keys reported missing,
+# or every type when --generate-sshd-keys --force was given (FORCE_SSHD_KEYS), replacing what
+# is there. Keys that exist are never touched without it. A type no ssh-keygen here knows is
+# skipped, and the image makes it at boot.
+generate_sshd_keys() {
+    local key_types=("${SSHD_MISSING_KEY_TYPES[@]}") type file work
+    local target="${BUILDROOT_BUILDER_DIR%/}/output/target" loader="" candidate
+    local target_keygen=()
+    if [[ "${FORCE_SSHD_KEYS}" -eq 1 ]]; then
+        key_types=("${SSHD_KEY_TYPES[@]}")
+        printf '%s\n' "--> Regenerating ALL sshd host keys (--force):"
+    else
+        printf '%s\n' "--> Generating the missing sshd host keys:"
+    fi
+    # The ssh-keygen Buildroot built for the image, run through the image's own dynamic
+    # loader (it is linked against the image's libraries, not this container's). It knows
+    # newer key types than the container's, such as mldsa44-ed25519. It exists once a first
+    # build has happened.
+    for candidate in "$target/lib/ld-linux-x86-64.so.2" "$target/usr/lib/ld-linux-x86-64.so.2"; do
+        if [ -x "$candidate" ]; then
+            loader="$candidate"
+            break
+        fi
+    done
+    if [ -n "$loader" ] && [ -x "$target/usr/bin/ssh-keygen" ]; then
+        target_keygen=("$loader" --library-path "$target/usr/lib:$target/lib" \
+            "$target/usr/bin/ssh-keygen")
+    fi
+    mkdir -p "${BUILDROOT_SSH_KEYS_DIR}"
+    chmod 764 "${BUILDROOT_SSH_KEYS_DIR}"
+    for type in "${key_types[@]}"; do
+        file="ssh_host_${type//-/_}_key"
+        work="$(mktemp -d "${BUILDROOT_SSH_KEYS_DIR}/.gen.XXXXXX")"
+        if ssh-keygen -q -t "$type" -N "" -C "" -f "${work}/key" > /dev/null 2>&1 || \
+           { [ ${#target_keygen[@]} -gt 0 ] && \
+             "${target_keygen[@]}" -q -t "$type" -N "" -C "" -f "${work}/key" > /dev/null 2>&1; }
+        then
+            chmod 600 "${work}/key"
+            chmod 644 "${work}/key.pub"
+            mv -f "${work}/key" "${BUILDROOT_SSH_KEYS_DIR}/${file}"
+            mv -f "${work}/key.pub" "${BUILDROOT_SSH_KEYS_DIR}/${file}.pub"
+            printf '\t%-18s generated: %s\n' "$type" "${BUILDROOT_SSH_KEYS_DIR}/${file}"
+        else
+            printf '\t%-18s not generated: no ssh-keygen here knows this key type\n' "$type"
+            printf '\t%-18s the image creates it at boot, so it changes with every image.\n' ""
+            printf '\t%-18s Run --generate-sshd-keys after the first build to create it.\n' ""
+        fi
+        rm -rf "$work"
+    done
+}
+
+# check_sshd_keys: make sure every sshd host key exists, generating only what is missing.
+# With --generate-sshd-keys --force (FORCE_SSHD_KEYS) the check is skipped and all of them
+# are generated again.
+check_sshd_keys() {
+    if [[ "${FORCE_SSHD_KEYS}" -eq 1 ]]; then
+        generate_sshd_keys
+    elif ! check_for_missing_sshd_keys; then
+        generate_sshd_keys
+    fi
+}
+
 prepare_overlay() {
+    # Host keys first: they have to exist before SCRIPTS_MAP below copies them into the
+    # overlay, and before any make runs.
+    check_sshd_keys
+
     # Buildroot 2026.08 check-merged requires a merged-/usr overlay: /bin
     # and /usr/sbin must be absent (or relative symlinks). Put every binary
     # under usr/bin; the target skeleton already has /bin -> usr/bin and
@@ -272,6 +399,7 @@ prepare_overlay() {
         ["${BUILDROOT_OVERLAY_DIR}/etc/shared-shell.sh"]=""
         ["${BUILDROOT_CONF_DIR%/}/post_build_script/append.sh"]=""
         ["${BUILDROOT_CONF_DIR%/}/post_build_script/set_os_release.sh"]=""
+        ["${BUILDROOT_SSH_KEYS_DIR%/}/"]="${BUILDROOT_OVERLAY_DIR}/etc/ssh"
     )
 
     # Sourced by login shells; the executable bit is unused, but keep them
@@ -293,7 +421,23 @@ prepare_overlay() {
 
     for file in "${!SCRIPTS_MAP[@]}"; do
         dest="${SCRIPTS_MAP[$file]}"
-        if [ -f "$file" ] || [ -d "$file" ]; then
+        if [[ "$file" == */ ]]; then
+            # Contents of a directory, merged into $dest (not rm -rf'd: etc/ssh also holds
+            # sshd_config). Not made executable either. Modes are set here, not taken from
+            # the source: a shared folder from the host may not keep them, and sshd refuses
+            # a private key that others can read.
+            if [ -d "$file" ]; then
+                mkdir -p "$dest"
+                while IFS= read -r -d '' key; do
+                    cp "$key" "$dest"/
+                    case "$key" in
+                        *.pub) chmod 644 "$dest/$(basename "$key")" ;;
+                        *) chmod 600 "$dest/$(basename "$key")" ;;
+                    esac
+                    printf '%s\n\t%s%s%s\n' "Copied key file:" "$key" " --> " "$dest"
+                done < <(find "$file" -maxdepth 1 -type f -print0)
+            fi
+        elif [ -f "$file" ] || [ -d "$file" ]; then
             if [ -n "$dest" ]; then
                 # cp -R copies a file or a whole directory; drop the old copy
                 # first so modules removed from the source do not linger.
@@ -327,6 +471,12 @@ EOF
         "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/installer-bootlog.service" \
         "${BUILDROOT_OVERLAY_DIR}/etc/systemd/system/installer-wizard.service"
 }
+
+# --generate-sshd-keys [--force]: only the keys, then stop.
+if [[ "${GENERATE_SSHD_KEYS}" -eq 1 ]]; then
+    check_sshd_keys
+    exit 0
+fi
 
 if [[ "${RESUME}" -eq 1 ]]; then
     printf '%s\n' "--> Resuming compilation via --resume argument:"

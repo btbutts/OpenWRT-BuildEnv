@@ -1,0 +1,7 @@
+# Computed from the files fetched from the URLs in high-res-font-pack.mk.
+# Inconsolata.tar.xz also matches the SHA-256.txt published with the nerd-fonts
+# v3.5.1 release. The others publish no checksum: these are trust-on-first-use.
+sha256  0c85bac90d15c040b82939aa92bc8404420fccc02e37bbcb9c93a7f21abb52c6  TTF-source-code-pro-2.042R-u_1.062R-i.zip
+sha256  be1903b0016d398e3dc5b25814438b8d0fa44ca9e0ac5d9775130f406345d586  Inconsolata.tar.xz
+sha256  22b294b02941242507b3e21ab5ebe9c114890a99de062aea94708cff53dbc23d  FiraMono.tar.xz
+sha256  6f6376c6ed2960ea8a963cd7387ec9d76e3f629125bc33d1fdcd7eb7012f7bbf  JetBrainsMono-2.304.zip

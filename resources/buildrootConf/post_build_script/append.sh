@@ -60,3 +60,20 @@ if [ -r "${X11_LOCALE_SRC}/compose.dir" ] && [ -r "${X11_LOCALE_SRC}/en_US.UTF-8
 else
     echo "append.sh: no X11 compose tables in ${X11_LOCALE_SRC}; kmscon will have no compose keys" >&2
 fi
+
+# sshd host keys. The overlay is copied with rsync --chmod=u=rwX,go=rX, which makes every
+# file readable by group and others, the private keys included. sshd then refuses them
+# ("UNPROTECTED PRIVATE KEY FILE ... bad permissions"), has no host key and does not start.
+# This script runs after the overlay is in place, so put the modes back.
+for key in "${TARGET}"/etc/ssh/ssh_host_*_key; do
+    if [ -f "${key}" ]; then
+        chmod 600 "${key}"
+        echo "Set permissions for ${key} to 600"
+    fi
+done
+for key in "${TARGET}"/etc/ssh/ssh_host_*_key.pub; do
+    if [ -f "${key}" ]; then
+        chmod 644 "${key}"
+        echo "Set permissions for ${key} to 644"
+    fi
+done
