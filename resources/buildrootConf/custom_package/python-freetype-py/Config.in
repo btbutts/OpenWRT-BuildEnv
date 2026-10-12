@@ -10,15 +10,3 @@ config BR2_PACKAGE_PYTHON_FREETYPE_PY
 
 comment "python-freetype-py needs python3"
 	depends on !BR2_PACKAGE_PYTHON3
-
-config BR2_PACKAGE_HOST_PYTHON_FREETYPE_PY
-	bool "host python-freetype-py"
-	help
-	  The same bindings for the host Python, built against
-	  host-freetype. For build-time scripts that render fonts, such
-	  as debian-console-fonts; nothing from it reaches the target.
-
-	  It finds libfreetype through ctypes, so a build that uses it
-	  needs $(HOST_DIR)/lib in LD_LIBRARY_PATH.
-
-	  https://github.com/rougier/freetype-py

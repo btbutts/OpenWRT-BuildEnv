@@ -4,27 +4,25 @@ config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS
 	depends on BR2_TOOLCHAIN_GCC_AT_LEAST_4_9 # kbd
 	select BR2_PACKAGE_KBD
 	help
-	  Linux console (PSF) fonts built the way Debian's console-setup
-	  builds them: its bdf2psf script and Makefile, its font and code
-	  set names (Uni2-Terminus16, Lat15-Fixed16, Greek-VGA16, ...).
+	  Linux console (PSF) fonts named and laid out the way Debian's
+	  console-setup does (Uni2-Terminus16, Lat15-Fixed16,
+	  Greek-VGA16, ...), built on the host from the fonts' original
+	  sources by the Python tool of a debian-console-fonts release.
 	  Only the .psf.gz files are installed, into
 	  /usr/share/consolefonts. Pick the font faces and code sets
 	  below.
 
-	  Terminus comes from its own upstream release. The other faces
-	  use the BDF sources bundled in the console-setup tarball.
-
-	  https://salsa.debian.org/installer-team/console-setup
+	  https://github.com/btbutts/debian-console-fonts
 
 if BR2_PACKAGE_DEBIAN_CONSOLE_FONTS
 
 config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_VERSION
-	string "console-setup version"
-	default "1.242~deb13u1"
+	string "debian-console-fonts release"
+	default "0.0.4"
 	help
-	  console-setup source release, as in
-	  https://deb.debian.org/debian/pool/main/c/console-setup/
-	  console-setup_<version>.tar.xz. Leave unset for the default.
+	  Release of github.com/btbutts/debian-console-fonts, without the
+	  leading v: the asset debian-console-fonts-<version>.tar.gz of
+	  the release v<version>. Leave unset for the default.
 
 comment "Font faces"
 
@@ -33,17 +31,7 @@ config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_TERMINUS
 	default y
 	help
 	  Terminus by Dimitar Toshkov Zhekov (SIL OFL 1.1), normal, bold
-	  and CRT-VGA bold, 6x12 to 16x32. Downloaded from its own
-	  release, replacing the older copy in the console-setup tarball.
-
-config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_TERMINUS_VERSION
-	string "Terminus version"
-	depends on BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_TERMINUS
-	default "4.49.1"
-	help
-	  Terminus release, for example 4.49.1, fetched from
-	  https://downloads.sourceforge.net/project/terminus-font/
-	  terminus-font-<major.minor>/terminus-font-<version>.tar.gz
+	  and CRT-VGA bold, 6x12 to 16x32.
 
 config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_VGA
 	bool "VGA"
@@ -55,8 +43,9 @@ config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_DEJAVU
 	bool "DejaVu"
 	help
 	  DejaVu Sans Mono (Bitstream Vera, Bitstream Inc.; DejaVu
-	  changes public domain) rendered with otf2bdf, 30x16 up to
-	  118x64, normal and bold. The largest files.
+	  changes public domain) rendered with FreeType on the host
+	  (host-freetype and freetype-py), 30x16 up to 118x64, normal
+	  and bold. The largest files.
 
 config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_FIXED
 	bool "Fixed"

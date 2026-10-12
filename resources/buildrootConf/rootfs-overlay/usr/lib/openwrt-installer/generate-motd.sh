@@ -25,6 +25,7 @@ individual files in /usr/share/doc/*/README,COPYING,AUTHORS.
 
 ${NAME} comes with ABSOLUTELY NO WARRANTY, to the extent
 permitted by applicable law.
+
 EOF
 } > "${tmp}"
 mv -f "${tmp}" /run/motd.dynamic

@@ -459,34 +459,40 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             self.assertEqual(mk.name, f"{mk.parent.name}.mk", str(mk))
 
     def test_debian_console_fonts_package(self) -> None:
-        """debian-console-fonts runs console-setup's own Makefile for chosen faces and code sets."""
+        """debian-console-fonts builds a release of its own tool and installs the fonts."""
         text = (self.ROOT / "debian-console-fonts" / "Config.in").read_text(encoding="utf-8")
         self.assertIn("config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS\n", text)
         self.assertIn("select BR2_PACKAGE_KBD", text)
         self.assertIn("depends on BR2_USE_MMU", text)
         self.assertIn("depends on BR2_TOOLCHAIN_GCC_AT_LEAST_4_9", text)
-        self.assertIn('default "1.242~deb13u1"', text)
-        self.assertIn('default "4.49.1"', text)
+        self.assertIn('default "0.0.3"', text)
+        self.assertNotIn("TERMINUS_VERSION", text)
         mk = (self.ROOT / "debian-console-fonts" / "debian-console-fonts.mk").read_text(
             encoding="utf-8"
         )
         self.assertIn(
-            "DEBIAN_CONSOLE_FONTS_SOURCE = console-setup_$(DEBIAN_CONSOLE_FONTS_VERSION).tar.xz", mk
+            "DEBIAN_CONSOLE_FONTS_SOURCE = "
+            "debian-console-fonts-$(DEBIAN_CONSOLE_FONTS_VERSION).tar.gz",
+            mk,
         )
-        self.assertIn("https://deb.debian.org/debian/pool/main/c/console-setup", mk)
-        self.assertIn("DEBIAN_CONSOLE_FONTS_DEPENDENCIES = kbd\n", mk)
-        self.assertNotIn("host-python3", mk)
-        # Terminus comes from its own release, only when that face is on.
-        self.assertIn("ifeq ($(BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_TERMINUS),y)", mk)
         self.assertIn(
-            "DEBIAN_CONSOLE_FONTS_EXTRA_DOWNLOADS = https://downloads.sourceforge.net", mk
+            "https://github.com/btbutts/debian-console-fonts/releases/download/"
+            "v$(DEBIAN_CONSOLE_FONTS_VERSION)",
+            mk,
         )
-        self.assertIn("'*/ter-u*.bdf'", mk)
-        self.assertIn("-f $(DEBIAN_CONSOLE_FONTS_PKGDIR)/select.makefile", mk)
-        self.assertIn("rsync -a --include='*.psf.gz' --exclude='*'", mk)
-        # The skip list is wired in but empty, so TerminusBoldVGA14/16 are built.
-        self.assertIn('SKIP_PATTERNS="$(DEBIAN_CONSOLE_FONTS_SKIP_PATTERNS)"', mk)
-        self.assertNotRegex(mk, r"(?m)^DEBIAN_CONSOLE_FONTS_SKIP_PATTERNS\s*=")
+        self.assertIn("DEBIAN_CONSOLE_FONTS_DEPENDENCIES = kbd host-python3\n", mk)
+        # FreeType is Buildroot's host-freetype: no archive of our own, nothing to download.
+        # The tool finds it itself, so the fragment passes no FreeType option at all.
+        self.assertNotIn("EXTRA_DOWNLOADS", mk)
+        self.assertNotIn("FREETYPE_ARCHIVE_DIR", mk)
+        self.assertNotIn("FREETYPE_LIB_DIR", mk)
+        self.assertNotIn("FREETYPE_ARGS", mk)
+        self.assertIn("host-python-freetype-py", mk)
+        # The tool runs on the host, with the host's compiler, and nothing is downloaded.
+        self.assertIn("$(HOST_MAKE_ENV) $(HOST_CONFIGURE_OPTS)", mk)
+        self.assertNotIn("TARGET_MAKE_ENV", mk)
+        self.assertNotIn("select.makefile", mk)
+        self.assertFalse((self.ROOT / "debian-console-fonts" / "select.makefile").exists())
         self.assertNotIn("FETCH_HASH", mk)
         self.assertEqual(
             cb.kconfig_package_symbol("debian-console-fonts"),
@@ -511,51 +517,66 @@ class Br2ExternalLayoutTests(unittest.TestCase):
             self.assertIn(option, mk, option)
 
     @unittest.skipUnless(shutil.which("make"), "make not installed")
-    def test_debian_console_fonts_select_mk(self) -> None:
-        """select.makefile picks fonts by code set and face, honours the skip list."""
-        select_mk = self.ROOT / "debian-console-fonts" / "select.makefile"
-        stub = (
-            "fntdir ?= $(shell pwd)\n"
-            "GOOD_FONT_NAMES := Uni2-Terminus16 Uni2-TerminusBold20x10 "
-            "Uni2-TerminusBoldVGA16 Uni2-TerminusBoldVGA14 Uni2-DejaVu30x16 "
-            "Lat15-Fixed16 Lat15-Terminus16 Greek-VGA16 FullGreek-VGA16 "
-            "Lat2-Fixed13 CyrKoi-Fixed16\n"
-            "%.psf.gz: ; touch $@\n"
-        )
+    def test_debian_console_fonts_mk_selects_faces_codesets_and_freetype(self) -> None:
+        """Evaluated by make: what a .config turns into, and the offline FreeType wiring."""
+        mk = self.ROOT / "debian-console-fonts" / "debian-console-fonts.mk"
 
-        def selected(codesets: str, faces: str, skip: str = "") -> set[str]:
+        def evaluate(config: str) -> dict[str, str]:
             with tempfile.TemporaryDirectory() as tmp:
-                (Path(tmp) / "Makefile").write_text(stub, encoding="utf-8")
-                (Path(tmp) / "select.makefile").write_text(
-                    select_mk.read_text(encoding="utf-8"), encoding="utf-8"
+                copy = Path(tmp) / "pkg.mk"  # make cannot include a path with a space
+                copy.write_text(mk.read_text(encoding="utf-8"), encoding="utf-8")
+                probe = Path(tmp) / "probe.mk"
+                names = (
+                    "VERSION", "SOURCE", "SITE", "FACE_PATTERNS", "CODESETS",
+                    "DEPENDENCIES", "EXTRA_DOWNLOADS", "FREETYPE_ARGS",
                 )
-                subprocess.run(
-                    [
-                        "make", "-s", "-C", tmp, "-f", "select.makefile",
-                        f"CODESETS={codesets}", f"FACE_PATTERNS={faces}",
-                        f"SKIP_PATTERNS={skip}", "selected",
-                    ],
-                    check=True,
-                    capture_output=True,
+                probe.write_text(
+                    "qstrip = $(strip $(subst \",,$(1)))\n"
+                    "define generic-package\nendef\n"
+                    f"{config}\n"
+                    f"include {copy}\n"
+                    + "".join(
+                        f"$(info {n}=$(strip $(DEBIAN_CONSOLE_FONTS_{n})))\n" for n in names
+                    )
+                    + "all:\n",
+                    encoding="utf-8",
                 )
-                return {p.name[: -len(".psf.gz")] for p in Path(tmp).glob("*.psf.gz")}
+                out = subprocess.run(
+                    ["make", "-s", "-f", str(probe), "all"],
+                    check=True, capture_output=True, text=True,
+                ).stdout
+            return dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
 
-        self.assertEqual(
-            selected("Uni2 Lat15 Greek", "Terminus% VGA% Fixed%", "TerminusBoldVGA16"),
-            {
-                "Uni2-Terminus16",
-                "Uni2-TerminusBold20x10",
-                "Uni2-TerminusBoldVGA14",
-                "Lat15-Fixed16",
-                "Lat15-Terminus16",
-                "Greek-VGA16",
-            },
+        base = (
+            "BR2_PACKAGE_DEBIAN_CONSOLE_FONTS=y\n"
+            "BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_TERMINUS=y\n"
+            "BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_UNICODE=y\n"
         )
-        # VGA% must not pick up TerminusBoldVGA*, and FullGreek is its own code set.
+        plain = evaluate(base)
+        self.assertEqual(plain["VERSION"], "0.0.3")
+        self.assertEqual(plain["SOURCE"], "debian-console-fonts-0.0.3.tar.gz")
         self.assertEqual(
-            selected("Uni2 Greek FullGreek", "VGA%"), {"Greek-VGA16", "FullGreek-VGA16"}
+            plain["SITE"],
+            "https://github.com/btbutts/debian-console-fonts/releases/download/v0.0.3",
         )
-        self.assertEqual(selected("Uni2", "DejaVu%"), {"Uni2-DejaVu30x16"})
+        self.assertEqual(plain["FACE_PATTERNS"], "Terminus%")
+        self.assertEqual(plain["CODESETS"], "Uni1 Uni2 Uni3")
+        # Without DejaVu nothing is drawn from TrueType: no FreeType anywhere.
+        self.assertEqual(plain["EXTRA_DOWNLOADS"], "")
+        self.assertEqual(plain["DEPENDENCIES"], "kbd host-python3")
+
+        dejavu = evaluate(base + "BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_DEJAVU=y\n")
+        self.assertEqual(dejavu["FACE_PATTERNS"], "Terminus% DejaVu%")
+        # FreeType and freetype-py are host packages; nothing is downloaded for them here.
+        self.assertEqual(dejavu["EXTRA_DOWNLOADS"], "")
+        self.assertIn("host-freetype", dejavu["DEPENDENCIES"])
+        self.assertIn("host-python-freetype-py", dejavu["DEPENDENCIES"])
+        self.assertEqual(dejavu["FREETYPE_ARGS"], "")
+
+        pinned = evaluate(
+            base + 'BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_VERSION="0.0.4"\n'
+        )
+        self.assertEqual(pinned["SOURCE"], "debian-console-fonts-0.0.4.tar.gz")
 
     def test_terminus_font_package(self) -> None:
         """terminus-font selects kbd and builds only the PSF console fonts."""
