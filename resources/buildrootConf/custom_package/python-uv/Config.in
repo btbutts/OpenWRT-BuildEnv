@@ -1,0 +1,33 @@
+config BR2_PACKAGE_PYTHON_UV
+	bool "python-uv"
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	depends on BR2_USE_MMU
+	select BR2_PACKAGE_HOST_RUSTC
+	help
+	  uv (astral-sh/uv), a Python package and project manager
+	  written in Rust. Installs /usr/bin/uv and /usr/bin/uvx.
+
+	  Independent of BR2_PACKAGE_PYTHON_PIP: both can be enabled.
+	  uv is built without the self-update feature.
+
+	  Tag 0.12.23 needs rustc >= 1.97.
+
+	  https://github.com/astral-sh/uv
+
+if BR2_PACKAGE_PYTHON_UV
+
+config BR2_PACKAGE_PYTHON_UV_VERSION
+	string "python-uv version (GitHub tag)"
+	default "0.12.23"
+	help
+	  GitHub tag from astral-sh/uv (no v prefix), for example
+	  0.12.23. Leave this unset to use that default.
+
+	  If python-uv.hash does not yet list that tag's tarball,
+	  its sha256 is appended at download time.
+
+endif
+
+comment "python-uv needs host rustc"
+	depends on BR2_USE_MMU
+	depends on !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS

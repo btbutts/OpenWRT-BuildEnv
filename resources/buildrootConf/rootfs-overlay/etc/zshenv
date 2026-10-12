@@ -1,0 +1,15 @@
+# /etc/zshenv: every zsh (login and non-login), before zprofile/zshrc.
+# Keep this to env only so scripts inherit pager/TERM without a prompt.
+
+export PATH=/usr/bin:/usr/sbin:/bin:/sbin
+
+if [ -z "${TERM:-}" ] || [ "$TERM" = "dumb" ]; then
+    export TERM=linux
+fi
+
+export EDITOR="${EDITOR:-/usr/bin/vim}"
+export VISUAL="${VISUAL:-$EDITOR}"
+export GROFF_NO_SGR=1
+export LESS="${LESS:--R}"
+export PAGER="${PAGER:-/usr/bin/less}"
+export MANPAGER="${MANPAGER:-/usr/bin/less -R}"

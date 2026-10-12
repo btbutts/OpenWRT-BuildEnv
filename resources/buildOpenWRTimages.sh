@@ -8,10 +8,8 @@ die() {
 }
 
 # Define directories
-WORKSPACE="/builder/workspace"
-IMAGE_BUILDER_DIR="/builder/OpenWRT-ImageBuilder"
-STAGING_DIR="${WORKSPACE}/staging"
-OUTPUT_DIR="${WORKSPACE}/output"
+: "${WORKSPACE_DIR:=/builder/workspace}"
+: "${OPENWRT_BUILDER_DIR:=/builder/OpenWRT-ImageBuilder}"
 
 # Optional: ./buildOpenWRTimages.sh --clean|-C
 #           ./buildOpenWRTimages.sh --package-only
@@ -70,25 +68,31 @@ smartmontools lm-sensors rng-tools kmod-tls"
 # List of EFI Firmware modules to be included in partition 1
 # (EFI System Partition)
 BOOT_EFI_MODS=(
-    part_gpt part_msdos mdraid1x mdraid09 ext2 part_apple 
-    part_bsd fat search search_label search_fs_uuid search_fs_file 
-    configfile ntfs usb btrfs exfat linux
+    part_apple part_bsd part_gpt part_msdos help time
+    mdraid09 mdraid1x linux btrfs exfat ext2 fat ntfs
+    configfile minicmd normal sleep test tr date echo
+    ls search search_fs_file search_fs_uuid search_label
+    all_video efi_gop efi_uga gfxterm lspci lsefi fshelp
+    font date datetime datehook cat boot chain cpuid
+    setpci read serial terminfo terminal hello progress
+    usb usb_keyboard usbserial_common usbserial_ftdi
+    usbserial_pl2303 usbserial_usbdebug usbtest
 )
 
 if [[ "$CLEAN" -eq 1 ]]; then
     echo "=== Step 1: Cleaning previous build environments ==="
-    rm -rf "${STAGING_DIR}" "${OUTPUT_DIR}"
+    rm -rf "${WORKSPACE_DIR%/}/staging" "${WORKSPACE_DIR%/}/output"
 else
     echo "=== Step 1: Reusing previous build environments (pass --clean or -C to wipe) ==="
 fi
 
 # Isolate the partition workspaces explicitly
-mkdir -p "${STAGING_DIR}/boot_partition/EFI/BOOT"
-mkdir -p "${STAGING_DIR}/root_partition" 
-mkdir -p "${OUTPUT_DIR}"
+mkdir -p "${WORKSPACE_DIR%/}/staging/boot_partition/EFI/BOOT"
+mkdir -p "${WORKSPACE_DIR%/}/staging/root_partition"
+mkdir -p "${WORKSPACE_DIR%/}/output"
 
 echo "=== Step 2: Executing OpenWrt Image Builder ==="
-cd "${IMAGE_BUILDER_DIR}"
+cd "${OPENWRT_BUILDER_DIR%/}"
 if [[ "$PACKAGE_ONLY" -ne 1 ]]; then
     make image PROFILE="generic" PACKAGES="${PACKAGES}" ROOTFS_PARTSIZE=256
 fi
@@ -108,23 +112,23 @@ fi
 
 echo "=== Step 3: Splicing OpenWrt RootFS & Injecting Custom Configurations ==="
 # Unpack the vanilla root archive to our isolated root staging environment
-tar -xzf "${VANILLA_ROOTFS}" -C "${STAGING_DIR}/root_partition"
+tar -xzf "${VANILLA_ROOTFS}" -C "${WORKSPACE_DIR%/}/staging/root_partition"
 
 # Ensure target directories exist inside the root filesystem space
-mkdir -p "${STAGING_DIR}/root_partition/boot/grub/x86_64-efi"
+mkdir -p "${WORKSPACE_DIR%/}/staging/root_partition/boot/grub/x86_64-efi"
 
 # Explicitly purge anything lingering in boot/efi inside RootFS, leaving it as a clean mount point anchor
-rm -rf "${STAGING_DIR}/root_partition/boot/efi"
-mkdir -p "${STAGING_DIR}/root_partition/boot/efi"
+rm -rf "${WORKSPACE_DIR%/}/staging/root_partition/boot/efi"
+mkdir -p "${WORKSPACE_DIR%/}/staging/root_partition/boot/efi"
 
 # Place the kernel directly into /boot/vmlinuz inside Partition 2
-cp "${VANILLA_KERNEL}" "${STAGING_DIR}/root_partition/boot/vmlinuz"
+cp "${VANILLA_KERNEL}" "${WORKSPACE_DIR%/}/staging/root_partition/boot/vmlinuz"
 
 # Copy all runtime .mod drivers into Partition 2 (/boot/grub/x86_64-efi/)
-cp /usr/lib/grub/x86_64-efi/*.mod "${STAGING_DIR}/root_partition/boot/grub/x86_64-efi/"
+cp /usr/lib/grub/x86_64-efi/*.mod "${WORKSPACE_DIR%/}/staging/root_partition/boot/grub/x86_64-efi/"
 
 echo "=== Step 4: Generating the Partition 1 (OpenWRT-BOOT) Early grub.cfg ==="
-cat << 'EOF' > "${STAGING_DIR}/boot_partition/EFI/BOOT/grub.cfg"
+cat << 'EOF' > "${WORKSPACE_DIR%/}/staging/boot_partition/EFI/BOOT/grub.cfg"
 insmod mdraid1x
 insmod ext2
 
@@ -136,7 +140,7 @@ configfile $prefix/grub.cfg
 EOF
 
 echo "=== Step 5: Generating the Partition 2 (OpenWRT-ROOT) Main System grub.cfg ==="
-cat << 'EOF' > "${STAGING_DIR}/root_partition/boot/grub/grub.cfg"
+cat << 'EOF' > "${WORKSPACE_DIR%/}/staging/root_partition/boot/grub/grub.cfg"
 set default="0"
 set timeout="6"
 
@@ -155,7 +159,7 @@ build_efi_bootstub() {
     grub-mkimage \
         -d /usr/lib/grub/x86_64-efi \
         -O x86_64-efi \
-        -o "${STAGING_DIR}/boot_partition/EFI/BOOT/bootx64.efi" \
+        -o "${WORKSPACE_DIR%/}/staging/boot_partition/EFI/BOOT/bootx64.efi" \
         -p "/boot/grub" \
         "${BOOT_EFI_MODS[@]}"
 }
@@ -163,23 +167,23 @@ build_efi_bootstub() {
 if ! build_efi_bootstub; then
     die 'Failed to generate Monolithic EFI Bootstub with grub-mkimage!'
 else
-    printf '%-27s %s\n' 'Wrote EFI Bootstub:' "${STAGING_DIR}/boot_partition/EFI/BOOT/bootx64.efi"
+    printf '%-27s %s\n' 'Wrote EFI Bootstub:' "${WORKSPACE_DIR%/}/staging/boot_partition/EFI/BOOT/bootx64.efi"
 fi
 
 echo "=== Step 7: Packaging Your Final Isolated Deployable Images ==="
 
 
 # 1. Package the OpenWRT-BOOT archive (contains ONLY EFI/BOOT/)
-tar -czf "${OUTPUT_DIR}/openwrt-custom-x86-64-boot.tar.gz" -C "${STAGING_DIR}/boot_partition" EFI/
+tar -czf "${WORKSPACE_DIR%/}/output/openwrt-custom-x86-64-boot.tar.gz" -C "${WORKSPACE_DIR%/}/staging/boot_partition" EFI/
 
 # 2. Re-tar the RootFS workspace preserving file permissions, including your newly injected components
-tar -czf "${OUTPUT_DIR}/openwrt-custom-x86-64-rootfs.tar.gz" -C "${STAGING_DIR}/root_partition" .
+tar -czf "${WORKSPACE_DIR%/}/output/openwrt-custom-x86-64-rootfs.tar.gz" -C "${WORKSPACE_DIR%/}/staging/root_partition" .
 
 cat << EOF
 =========================================================
 BUILD SUCCESSFUL!
 Your custom deployment archives are waiting inside your output directory:
-${OUTPUT_DIR}
+${WORKSPACE_DIR%/}/output
 
 ‣ openwrt-custom-x86-64-boot.tar.gz
    └── (Contains ONLY: EFI/BOOT/bootx64.efi & early grub.cfg) -> Extract to Partition 1

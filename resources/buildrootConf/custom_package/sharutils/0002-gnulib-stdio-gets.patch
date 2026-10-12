@@ -1,0 +1,17 @@
+glibc 2.16+ removed gets() from <stdio.h>. 4.9 gnulib still assumes
+C89 always declares it and emits _GL_WARN_ON_USE (gets, ...), which
+uses __typeof__(gets) and fails with "'gets' undeclared".
+
+--- a/lib/stdio.in.h
++++ b/lib/stdio.in.h
+@@ -116,8 +116,10 @@
+ /* It is very rare that the developer ever has full control of stdin,
+    so any use of gets warrants an unconditional warning.  Assume it is
+    always declared, since it is required by C89.  */
++#if defined gets
+ #undef gets
+ _GL_WARN_ON_USE (gets, "gets is a security hole - use fgets instead");
++#endif
+ 
+ #if @GNULIB_FOPEN@
+ # if @REPLACE_FOPEN@

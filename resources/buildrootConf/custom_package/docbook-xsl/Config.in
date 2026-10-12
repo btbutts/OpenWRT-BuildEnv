@@ -1,0 +1,29 @@
+config BR2_PACKAGE_HOST_DOCBOOK_XSL
+	bool "host docbook-xsl"
+	select BR2_PACKAGE_HOST_DOCBOOK_XML
+	help
+	  XML stylesheets for DocBook-XML transformations (the
+	  non-namespaced "nons" release, for DocBook 4 sources such as
+	  man pages written as <refentry>).
+
+	  This is a host package only: it is installed into the host
+	  directory for tools such as xsltproc, and nothing is added to
+	  the target root filesystem.
+
+	  A catalog that maps the stylesheet URLs to the installed files
+	  is provided, so xsltproc --nonet can find them. Use it with
+
+	      XML_CATALOG_FILES=$(HOST_DOCBOOK_XSL_CATALOG)
+
+	  https://docbook.org
+
+config BR2_PACKAGE_HOST_DOCBOOK_XML
+	bool "host docbook-xml"
+	help
+	  The DocBook XML 4.2 DTD, which DocBook XML sources and the
+	  DocBook XSL stylesheets are written against.
+
+	  Selected by host docbook-xsl. Host only: nothing is added to
+	  the target root filesystem.
+
+	  https://docbook.org

@@ -1,0 +1,20 @@
+configure.ac AC_RUN_IFELSE for popen("date","rb") has no cross-compile
+fallback. Autoconf then aborts with "cannot run test program while
+cross compiling". On GNU/Linux the "b" mode character is ignored.
+
+--- a/configure
++++ b/configure
+@@ -25610,10 +25610,9 @@
+ fi
+ 
+ if test "$cross_compiling" = yes; then :
+-  { { $as_echo "$as_me:${as_lineno-$LINENO}: error: in \`$ac_pwd':" >&5
+-$as_echo "$as_me: error: in \`$ac_pwd':" >&2;}
+-as_fn_error "cannot run test program while cross compiling
+-See \`config.log' for more details." "$LINENO" 5; }
++  # Linux popen(3) treats "b" as a no-op; do not AC_RUN_IFELSE when cross.
++  $as_echo "#define BINARY_MODE_POPEN 1" >>confdefs.h
++
+ else
+   cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+ /* end confdefs.h.  */

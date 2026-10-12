@@ -1,0 +1,12 @@
+config BR2_PACKAGE_PYTHON_FREETYPE_PY
+	bool "python-freetype-py"
+	depends on BR2_PACKAGE_PYTHON3
+	select BR2_PACKAGE_FREETYPE
+	help
+	  Python (ctypes) bindings for FreeType, installed into the
+	  target's Python. It loads the target libfreetype at run time.
+
+	  https://github.com/rougier/freetype-py
+
+comment "python-freetype-py needs python3"
+	depends on !BR2_PACKAGE_PYTHON3

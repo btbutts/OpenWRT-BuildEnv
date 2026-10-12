@@ -1,0 +1,11 @@
+# Host-side development tools for the installer wizard (never copied into the image).
+# On the image itself only prompt_toolkit and wcwidth are installed, by Buildroot.
+# Installed into the workspace venv that pylint and Pylance use:
+#   Docker/.OpenWRT.Builder.venv/bin/pip install -r requirements-dev.txt
+prompt_toolkit
+wcwidth
+pytest
+pytest-timeout
+ruff
+pylint
+pyright

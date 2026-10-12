@@ -1,27 +1,29 @@
 #!/bin/bash
 set -e
 
-STAGING_DIR="/builder/workspace/output/usb_installer_stage"
-BUILDROOT_ASSETS="/builder/workspace/output/buildroot"
-OPENWRT_ASSETS="/builder/workspace/output"
+: "${WORKSPACE_DIR:=/builder/workspace}"
+: "${BUILDROOT_OUTPUT_DIR:=/builder/workspace/output/buildroot}"
+: "${OPENWRT_OUTPUT_DIR:=/builder/workspace/output}"
+: "${USB_INSTALLER_STAGE_DIR:=/builder/workspace/output/usb_installer_stage}"
+: "${BUILDROOT_CONF_DIR:=/builder/buildrootConf}"
 
 echo "--> Initializing custom USB installer staging tree..."
-rm -rf "$STAGING_DIR"
-mkdir -p "${STAGING_DIR}/EFI/BOOT"
-mkdir -p "${STAGING_DIR}/boot"
+rm -rf "${USB_INSTALLER_STAGE_DIR%/}"
+mkdir -p "${USB_INSTALLER_STAGE_DIR%/}/EFI/BOOT"
+mkdir -p "${USB_INSTALLER_STAGE_DIR%/}/boot"
 
 # Step 1: Copy over your freshly compiled Buildroot installer kernel and initramfs
 echo "--> Staging compiled kernel architecture payload..."
-if [ -f "${BUILDROOT_ASSETS}/vmlinuz-installer" ]; then
-    cp "${BUILDROOT_ASSETS}/vmlinuz-installer" "${STAGING_DIR}/boot/vmlinuz-installer"
+if [ -f "${BUILDROOT_OUTPUT_DIR%/}/vmlinuz-installer" ]; then
+    cp "${BUILDROOT_OUTPUT_DIR%/}/vmlinuz-installer" "${USB_INSTALLER_STAGE_DIR%/}/boot/vmlinuz-installer"
 else
     echo "ERROR: vmlinuz-installer asset missing from Buildroot output directory!" >&2
     exit 1
 fi
 
 echo "--> Staging compiled initramfs payload..."
-if [ -f "${BUILDROOT_ASSETS}/initramfs-installer.img" ]; then
-    cp "${BUILDROOT_ASSETS}/initramfs-installer.img" "${STAGING_DIR}/boot/initramfs-installer.img"
+if [ -f "${BUILDROOT_OUTPUT_DIR%/}/initramfs-installer.img" ]; then
+    cp "${BUILDROOT_OUTPUT_DIR%/}/initramfs-installer.img" "${USB_INSTALLER_STAGE_DIR%/}/boot/initramfs-installer.img"
 else
     echo "ERROR: initramfs-installer.img asset missing from Buildroot output directory!" >&2
     exit 1
@@ -29,61 +31,43 @@ fi
 
 # Step 2: Inject your custom production OpenWRT deployment tarballs into the staging root
 echo "--> Staging custom OpenWRT production payloads..."
-if [ -f "${OPENWRT_ASSETS}/openwrt-custom-x86-64-boot.tar.gz" ] && [ -f "${OPENWRT_ASSETS}/openwrt-custom-x86-64-rootfs.tar.gz" ]; then
+if [ -f "${OPENWRT_OUTPUT_DIR%/}/openwrt-custom-x86-64-boot.tar.gz" ] && [ -f "${OPENWRT_OUTPUT_DIR%/}/openwrt-custom-x86-64-rootfs.tar.gz" ]; then
     # Copy and map names directly to match what setup.sh scans for on boot
-    cp "${OPENWRT_ASSETS}/openwrt-custom-x86-64-boot.tar.gz" "${STAGING_DIR}/openwrt-boot.tar.gz"
-    cp "${OPENWRT_ASSETS}/openwrt-custom-x86-64-rootfs.tar.gz" "${STAGING_DIR}/openwrt-rootfs.tar.gz"
+    cp "${OPENWRT_OUTPUT_DIR%/}/openwrt-custom-x86-64-boot.tar.gz" "${USB_INSTALLER_STAGE_DIR%/}/openwrt-boot.tar.gz"
+    cp "${OPENWRT_OUTPUT_DIR%/}/openwrt-custom-x86-64-rootfs.tar.gz" "${USB_INSTALLER_STAGE_DIR%/}/openwrt-rootfs.tar.gz"
     echo "--> Successfully staged and renamed production OpenWRT dependencies."
 else
-    echo "WARNING: Production OpenWRT tarballs not found inside ${OPENWRT_ASSETS}." >&2
+    echo "WARNING: Production OpenWRT tarballs not found inside ${OPENWRT_OUTPUT_DIR%/}." >&2
     echo "         Make sure to execute buildOpenWRTimages.sh before copying this layout to your physical USB drive." >&2
 fi
 
 # Step 3: Generate the custom embedded GRUB.cfg steering loop
 # This tells the primary binary to look for the real configuration on the drive
-echo "--> Creating structural boot configs..."
-cat << 'EOF' > "${STAGING_DIR}/EFI/BOOT/grub.cfg"
-set default=0
-set timeout=5
-
-translation_filter_mode=1
-insmod part_gpt
-insmod part_msdos
-insmod fat
-insmod ext2
-insmod serial
-insmod video
-insmod font
-
-set installer_cmdline="console=tty0 loglevel=7"
-
-menuentry "Execute Bare-Metal OpenWRT Deployment Engine" --class linux {
-    echo "Loading customized system installer kernel..."
-    search --no-floppy --file --set=root /boot/vmlinuz-installer
-    linux /boot/vmlinuz-installer ${installer_cmdline}
-    echo "Loading ramdisk..."
-    initrd /boot/initramfs-installer.img
-}
-
-menuentry "Emergency Hardware Maintenance Shell" --class shell {
-    echo "Loading kernel in diagnostic maintenance framework mode..."
-    search --no-floppy --file --set=root /boot/vmlinuz-installer
-    linux /boot/vmlinuz-installer ${installer_cmdline} single
-    echo "Loading ramdisk..."
-    initrd /boot/initramfs-installer.img
-}
-EOF
+echo "--> Copying structural boot configs..."
+cp "${BUILDROOT_CONF_DIR%/}/grub/buildroot.grub.cfg" "${USB_INSTALLER_STAGE_DIR%/}/EFI/BOOT/grub.cfg"
 
 # Step 4: Compile the raw universal EFI binary stub
 echo "--> Compiling standalone generic x86_64 EFI bootloader payload..."
-grub-mkimage -O x86_64-efi \
-    -o "${STAGING_DIR}/EFI/BOOT/BOOTX64.EFI" \
+grub_mods=(
+    part_gpt part_msdos exfat ext2 fat linux help time
+    configfile minicmd normal sleep test tr date echo
+    ls search search_fs_file search_fs_uuid search_label
+    all_video efi_gop efi_uga gfxterm lspci lsefi fshelp
+    font date datetime datehook cat boot chain cpuid
+    setpci read serial terminfo terminal hello progress
+    usb usb_keyboard usbserial_common usbserial_ftdi
+    usbserial_pl2303 usbserial_usbdebug usbtest probe
+)
+grub-mkimage \
+    -d /usr/lib/grub/x86_64-efi \
+    -O x86_64-efi \
+    -o "${USB_INSTALLER_STAGE_DIR%/}/EFI/BOOT/BOOTX64.EFI" \
     -p "/EFI/BOOT" \
-    part_gpt part_msdos fat ext2 exfat normal test configfile linux search normal ls echo
+    "${grub_mods[@]}"
 
 echo "========================================================="
 echo "STAGING SUCCESSFUL!"
 echo "Your bootable USB deployment layout is sitting in:"
-echo "   ${STAGING_DIR}"
+echo "   ${USB_INSTALLER_STAGE_DIR%/}"
 echo "========================================================="
 exit 0

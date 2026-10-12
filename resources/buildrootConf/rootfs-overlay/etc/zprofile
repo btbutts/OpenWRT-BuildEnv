@@ -1,0 +1,2 @@
+# /etc/zprofile: zsh login shells. /etc/profile is shared with bash.
+[ -r /etc/profile ] && . /etc/profile

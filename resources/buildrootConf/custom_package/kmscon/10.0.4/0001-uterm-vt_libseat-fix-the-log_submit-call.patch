@@ -1,0 +1,24 @@
+From: Upstream kmscon (kmscon/kmscon#540, fixes #539)
+Subject: [PATCH] uterm: vt_libseat: adapt log_libseat() to the new log_submit()
+
+Commit efda2b5 (PR #523, "log: Simplify logging") removed LOG_DEFAULT and changed
+log_submit() to (severity, subsystem, format, args), but did not update vt_libseat.c,
+so the file does not compile with -Dlibseat=enabled (issue #539). This is the upstream
+fix (PR #540), taken for the 10.0.4 release which does not have it. Drop it once the
+package moves to a release that does.
+
+---
+ src/uterm/vt_libseat.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/src/uterm/vt_libseat.c
++++ b/src/uterm/vt_libseat.c
+@@ -260,7 +260,7 @@
+ 
+ static void log_libseat(enum libseat_log_level level, const char *fmt, va_list args)
+ {
+-	log_submit(LOG_DEFAULT, log_level(level), fmt, args);
++	log_submit(log_level(level), "libseat", fmt, args);
+ }
+ 
+ static void vt_libseat_input(struct input *input, struct input_key_event *ev, void *data)

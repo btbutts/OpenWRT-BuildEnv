@@ -1,0 +1,24 @@
+config BR2_PACKAGE_HEXEDIT
+	bool "hexedit"
+	select BR2_PACKAGE_NCURSES
+	help
+	  A robust CLI tool to view and edit files in hexadecimal
+	  or in ASCII side-by-side.
+
+	  https://github.com/pixel/hexedit
+
+if BR2_PACKAGE_HEXEDIT
+
+config BR2_PACKAGE_HEXEDIT_VERSION
+	string "hexedit version (GitHub tag)"
+	default "1.6"
+	help
+	  GitHub tag from pixel/hexedit. Default is 1.6; leave this
+	  unset to use that default.
+
+	  At download time the tag is checked against
+	  https://api.github.com/repos/pixel/hexedit/tags
+	  An unknown tag fails the build. If hexedit.hash does not
+	  yet list that tag's tarball, its sha256 is appended.
+
+endif

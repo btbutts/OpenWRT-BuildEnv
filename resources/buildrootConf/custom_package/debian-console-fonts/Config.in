@@ -1,0 +1,119 @@
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS
+	bool "debian-console-fonts"
+	depends on BR2_USE_MMU # kbd
+	depends on BR2_TOOLCHAIN_GCC_AT_LEAST_4_9 # kbd
+	select BR2_PACKAGE_KBD
+	help
+	  Linux console (PSF) fonts named and laid out the way Debian's
+	  console-setup does (Uni2-Terminus16, Lat15-Fixed16,
+	  Greek-VGA16, ...), built on the host from the fonts' original
+	  sources by the Python tool of a debian-console-fonts release.
+	  Only the .psf.gz files are installed, into
+	  /usr/share/consolefonts. Pick the font faces and code sets
+	  below.
+
+	  https://github.com/btbutts/debian-console-fonts
+
+if BR2_PACKAGE_DEBIAN_CONSOLE_FONTS
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_VERSION
+	string "debian-console-fonts release"
+	default "0.0.4"
+	help
+	  Release of github.com/btbutts/debian-console-fonts, without the
+	  leading v: the asset debian-console-fonts-<version>.tar.gz of
+	  the release v<version>. Leave unset for the default.
+
+comment "Font faces"
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_TERMINUS
+	bool "Terminus"
+	default y
+	help
+	  Terminus by Dimitar Toshkov Zhekov (SIL OFL 1.1), normal, bold
+	  and CRT-VGA bold, 6x12 to 16x32.
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_VGA
+	bool "VGA"
+	help
+	  UniVGA by Dmitry Bolkhovityanov, with the legacy*.bdf
+	  supplements made by the console-setup maintainers.
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_DEJAVU
+	bool "DejaVu"
+	help
+	  DejaVu Sans Mono (Bitstream Vera, Bitstream Inc.; DejaVu
+	  changes public domain) rendered with FreeType on the host
+	  (host-freetype and freetype-py), 30x16 up to 118x64, normal
+	  and bold. The largest files.
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_FIXED
+	bool "Fixed"
+	help
+	  The X11 "misc-fixed" family (public domain; Unicode work by
+	  Markus Kuhn), merged per size with BIZNET Poland's ISO 8859-2
+	  versions, Efont, ETL and GNU Unifont glyphs.
+
+comment "Code sets (a face is only built for the code sets it covers)"
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_UNICODE
+	bool "Unicode (Uni1, Uni2, Uni3)"
+	default y
+	help
+	  The 512-glyph Unicode code sets, for UTF-8 consoles.
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_LATIN
+	bool "Latin1 with Euro (Lat15)"
+	help
+	  ISO 8859-1, 8859-9 and 8859-15 (Latin-1, Latin-5, Latin-9).
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_LATIN2
+	bool "Latin2 (Lat2)"
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_LATIN7
+	bool "Latin7 (Lat7)"
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_LATIN38
+	bool "Latin3 and Latin8 (Lat38)"
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_GREEK
+	bool "Greek"
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_CYRILLIC
+	bool "Cyrillic (CyrSlav, CyrKoi, CyrAsia)"
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_ARABIC
+	bool "Arabic"
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_HEBREW
+	bool "Hebrew"
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_VIETNAMESE
+	bool "Vietnamese"
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_ARMENIAN
+	bool "Armenian"
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_GEORGIAN
+	bool "Georgian"
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_ETHIOPIAN
+	bool "Ethiopian"
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_LAO
+	bool "Lao"
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_THAI
+	bool "Thai"
+
+config BR2_PACKAGE_DEBIAN_CONSOLE_FONTS_SCREEN_READER
+	bool "Full Greek and Cyrillic (FullGreek, FullCyrSlav, FullCyrAsia)"
+	help
+	  Uncompressed 512-glyph variants for console screen readers
+	  such as speakup or brltty.
+
+endif
+
+comment "debian-console-fonts needs a toolchain w/ gcc >= 4.9"
+	depends on BR2_USE_MMU
+	depends on !BR2_TOOLCHAIN_GCC_AT_LEAST_4_9

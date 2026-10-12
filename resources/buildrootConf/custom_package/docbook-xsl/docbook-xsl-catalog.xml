@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  XML catalog installed next to the DocBook XSL (non-namespaced) stylesheets.
+
+  Build systems refer to the stylesheets by the old docbook.sourceforge.net
+  URL, for example
+    http://docbook.sourceforge.net/release/xsl/current/manpages/docbook.xsl
+  and run xsltproc with its nonet option, so the URL has to resolve through a
+  catalog. The catalog shipped in the release only knows cdn.docbook.org.
+
+  Only "current" is mapped. SourceForge stopped at 1.79.1 (still what its
+  "current" holds), and 1.79.2 was never published there, so a versioned
+  1.79.2 URL on that host does not exist and nothing can refer to it.
+
+  The "./" prefixes are relative to this file, so the catalog keeps working if
+  the host directory is moved.
+-->
+<catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
+  <rewriteURI uriStartString="http://docbook.sourceforge.net/release/xsl/current/" rewritePrefix="./"/>
+  <rewriteSystem systemIdStartString="http://docbook.sourceforge.net/release/xsl/current/" rewritePrefix="./"/>
+  <rewriteURI uriStartString="https://docbook.sourceforge.net/release/xsl/current/" rewritePrefix="./"/>
+  <rewriteSystem systemIdStartString="https://docbook.sourceforge.net/release/xsl/current/" rewritePrefix="./"/>
+  <nextCatalog catalog="catalog.xml"/>
+  <!-- DocBook XML 4.2 DTD, installed by docbook-xml.mk next to this directory -->
+  <nextCatalog catalog="../xml-dtd-4.2/catalog.xml"/>
+</catalog>

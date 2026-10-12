@@ -1,0 +1,39 @@
+config BR2_PACKAGE_TERMINUS_FONT
+	bool "terminus-font"
+	depends on BR2_USE_MMU
+	depends on BR2_TOOLCHAIN_GCC_AT_LEAST_4_9
+	select BR2_PACKAGE_KBD
+	help
+	  Terminus, a clean fixed-width bitmap font, built as Linux
+	  console (PSF) fonts and installed gzipped into
+	  /usr/share/consolefonts, the directory kbd owns. Only the PSF
+	  fonts are built; the X11 (PCF) and OpenType bitmap outputs are
+	  skipped, so no X11 tools are needed.
+
+	  Use one with setfont, or set FONT= in /etc/vconsole.conf, for
+	  example Uni-Terminus20x10 or Uni-TerminusBold20x10. Names are
+	  <Set>-Terminus[Bold|BoldVGA]<height>[x<width>], width omitted
+	  when it is 8. Sets: Uni (all), Latin1, Latin2, Greek, Turkish,
+	  Cyrillic, Baltic, Latin10, Hebrew, CP437, KOI8R, MIK, PT154, KOI8U.
+
+	  https://terminus-font.sourceforge.net/
+
+if BR2_PACKAGE_TERMINUS_FONT
+
+config BR2_PACKAGE_TERMINUS_FONT_VERSION
+	string "terminus-font version"
+	default "4.49.1"
+	help
+	  Terminus release, for example 4.49.1. Leave this unset to use
+	  that default.
+
+	  Downloaded from
+	  https://downloads.sourceforge.net/project/terminus-font/
+	  terminus-font-<major.minor>/terminus-font-<version>.tar.gz
+	  where <major.minor> is derived from the version.
+
+endif
+
+comment "terminus-font needs a toolchain w/ gcc >= 4.9"
+	depends on BR2_USE_MMU
+	depends on !BR2_TOOLCHAIN_GCC_AT_LEAST_4_9

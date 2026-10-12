@@ -4,3 +4,6 @@ buildEnvShare/
 buildArchive/
 OpenWRTImageBuilder/
 OpenWRTImagesOut/
+__pycache__/
+resources/Buildroot_Sample.Makefile
+resources/buildrootFULL.config

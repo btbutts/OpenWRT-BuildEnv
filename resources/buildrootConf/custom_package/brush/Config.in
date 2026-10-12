@@ -1,0 +1,41 @@
+config BR2_PACKAGE_BRUSH
+	bool "brush"
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	depends on BR2_USE_MMU
+	select BR2_PACKAGE_HOST_RUSTC
+	help
+	  POSIX and bash compatible shell written in Rust
+	  (reubeno/brush). Installs /usr/bin/brush from the
+	  brush-shell crate. Does not replace /bin/sh.
+
+	  Tag brush-shell-v0.4.0 needs rustc >= 1.88. Default
+	  cargo features are basic, reedline, and minimal.
+
+	  https://github.com/reubeno/brush
+
+if BR2_PACKAGE_BRUSH
+
+config BR2_PACKAGE_BRUSH_VERSION
+	string "brush version (GitHub tag without brush-shell-v)"
+	default "0.4.0"
+	help
+	  Version from reubeno/brush without the brush-shell-v
+	  prefix, for example 0.4.0. The download tag is
+	  brush-shell-v$(BR2_PACKAGE_BRUSH_VERSION).
+
+	  If brush.hash does not yet list that tag's tarball, its
+	  sha256 is appended at download time.
+
+config BR2_PACKAGE_BRUSH_DOCS
+	bool "install brush man page and markdown docs"
+	default y
+	help
+	  Download brush-docs.tar.gz from the matching GitHub
+	  release and install man/brush.1 to /usr/share/man/man1
+	  plus md/brush.md to /usr/share/doc/brush.
+
+endif
+
+comment "brush needs host rustc"
+	depends on BR2_USE_MMU
+	depends on !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS

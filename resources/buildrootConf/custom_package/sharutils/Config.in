@@ -1,0 +1,25 @@
+config BR2_PACKAGE_SHARUTILS
+	bool "sharutils"
+	select BR2_PACKAGE_OPENSSL
+	select BR2_PACKAGE_GNUTLS
+	select BR2_PACKAGE_GNUTLS_OPENSSL
+	help
+	  GNU sharutils contains utilities for creating and unpacking
+	  shell archives (shars), as well as uuencode and uudecode.
+
+	  http://www.gnu.org/software/sharutils/
+
+if BR2_PACKAGE_SHARUTILS
+
+config BR2_PACKAGE_SHARUTILS_VERSION
+	string "sharutils version"
+	default "4.9"
+	help
+	  GNU ftp.gnu.org/gnu/sharutils release, for example 4.9.
+	  Leave this unset to use the default.
+
+	  At download time the tarball name is checked on the GNU
+	  mirror. If sharutils.hash does not yet list that tarball,
+	  its sha256 is appended.
+
+endif

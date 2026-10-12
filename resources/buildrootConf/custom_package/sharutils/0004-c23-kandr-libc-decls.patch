@@ -1,0 +1,48 @@
+GCC 15 defaults to C23, where `FILE *fdopen();` means `FILE *(void)`
+and conflicts with glibc's prototypes. 4.9 redeclares fdopen/ftell/popen,
+localtime, and getpwnam that way; the real declarations already come from
+the system headers. uudecode.c also calls isspace without <ctype.h>.
+
+--- a/lib/system.h
++++ b/lib/system.h
+@@ -139,10 +139,6 @@
+ # include <unistd.h>
+ #endif
+ 
+-FILE *fdopen ();
+-long ftell ();
+-FILE *popen ();
+-
+ #if ! HAVE_FSEEKO
+ # ifndef fseeko
+ #  define fseeko fseek
+--- a/src/shar.c
++++ b/src/shar.c
+@@ -86,8 +86,6 @@
+ #define IS_GRAPH(_c) (isprint (_c) && !isspace (_c))
+ #endif
+ 
+-struct tm *localtime ();
+-
+ #if MSDOS
+           /* 1 extra for CR.  */
+ #  define CRLF_STRLEN(_s)  (strlen (_s) + 1)
+--- a/src/uudecode.c
++++ b/src/uudecode.c
+@@ -70,6 +70,7 @@
+ \=====================================================================*/
+ 
+ #include <pwd.h>
++#include <ctype.h>
+ 
+ #define UU_MODE_BITS(_M)        ((_M) & (S_IRWXU | S_IRWXG | S_IRWXO))
+ #if HAVE_FCHMOD
+@@ -78,8 +79,6 @@
+ #define UU_CHMOD(_n, _fd, _m)   chmod ((_n), UU_MODE_BITS(_m))
+ #endif
+ 
+-struct passwd *getpwnam ();
+-
+ static struct option longopts[] =
+ {
+   { "version", no_argument, NULL, 'v' },
